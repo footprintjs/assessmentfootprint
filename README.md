@@ -44,7 +44,7 @@ The project path defaults to the current working directory. Stored data defaults
 
 ```sh
 node src/cli.ts run /absolute/path/to/project --data-dir ./assessment-data
-node src/cli.ts studio /absolute/path/to/project --data-dir ./assessment-data
+node bin/assessment.mjs studio /absolute/path/to/project --data-dir ./assessment-data
 node src/cli.ts report RUN_ID --format json --data-dir ./assessment-data
 ```
 
@@ -70,7 +70,7 @@ A completed run means that the selected checks finished. It can still contain ne
 | `dependency-vulnerabilities` | OSV-Scanner v2 checks the frozen root lockfiles. A usable scan identifying packages and reporting vulnerabilities is not satisfied; a usable scan identifying packages and reporting none is satisfied only within that scan's scope. Missing scanners, unsupported scanner versions, missing databases, empty package coverage, or unusable output remain insufficient evidence. Without a root manifest, this is not applicable. |
 | `governance-review` | A person inspects available governance, contribution, and README documents, identifies decision authority and contributor participation, and records a decision with a rationale. Document presence alone does not satisfy this criterion. |
 
-The framework is `oss-readiness`, version `0.1.0`. Each run stores its policy digest and selected criterion results. It has no aggregate score that turns missing evidence into a passing mark.
+The framework is `oss-readiness`, version `0.1.0`. Each run stores its policy digest, copies of the selected criterion definitions, and their results, so an older finding keeps the rule it was assessed against. It has no aggregate score that turns missing evidence into a passing mark.
 
 ## Optional OSV-Scanner
 
@@ -94,7 +94,7 @@ Prepare advisory data separately while connected to the internet. OSV documents 
 osv-scanner scan source --offline --download-offline-databases --no-call-analysis=go --lockfile=/absolute/path/to/project/package-lock.json
 ```
 
-Use the appropriate actual lockfile path. A vulnerability finding can produce a non-zero scan exit even after the database download. See [OSV's offline-mode documentation](https://github.com/google/osv-scanner/blob/main/docs/offline-mode.md) for database placement and `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY`; the workbench inherits that environment setting. OSV's database files live under the cache's `osv-scanner/<ecosystem>/all.zip` path. Offline preparation is not performed automatically by AssessmentFootprint.
+Use the appropriate actual lockfile path. A vulnerability finding can produce a non-zero scan exit even after the database download. The workbench inherits `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` when set. For **OSV-Scanner 2.6.0**, set that variable to the cache base directory and place an npm database at `<cache-base>/osv-scalibr/npm/all.zip`. The scanner uses the Scalibr cache layout; older offline documentation shows an `osv-scanner` suffix. The exact current layout is confirmed by [OSV 2.6.0's environment binding](https://github.com/google/osv-scanner/blob/v2.6.0/cmd/osv-scanner/internal/helper/flags.go) and [its pinned Scalibr database-path implementation](https://github.com/google/osv-scalibr/blob/3090dbb7aaa2/enricher/vulnmatch/osvlocal/matcher.go). Moving an existing downloaded `npm/all.zip` into the correct layout avoids downloading it again. See [OSV's offline-mode documentation](https://github.com/google/osv-scanner/blob/main/docs/offline-mode.md) for ecosystem downloads. Offline preparation is not performed automatically by AssessmentFootprint.
 
 During assessment, the adapter passes only explicit frozen root lockfiles to `scan source`, requests JSON and all package records, and disables Go call analysis. Offline mode adds OSV's `--offline` flag. It does not install the project, invoke build or test scripts, remediate dependencies, or scan source reachability. [OSV documents](https://google.github.io/osv-scanner/usage/scan-source) the separate call-analysis behavior and its additional execution requirements.
 
@@ -106,7 +106,9 @@ The data directory contains `assessment.sqlite` and `runs/<run-id>/`. Selected i
 
 FootprintJS `9.44.1` actually executes a linear chart: an input-digest stage followed by the selected criterion stages. Its state writes, commit log, write provenance, and narrative are saved in a workflow evidence artifact. This is recorded execution, not an invented explanation generated after the result.
 
-Studio shows run history, criterion findings, original evidence, and an attributed governance-review form. Reviews append to the review history and update the current expert finding. HTML and JSON reports include findings, evidence metadata, limitations, and review history; raw artifact files remain in the local data directory and are not embedded as a portable evidence bundle. Evidence reads verify stored bytes against their recorded digest. These hashes are integrity checks, not signatures or independent authentication of the whole local record.
+Studio shows run history, criterion findings, original evidence, and an attributed governance-review form. Reviews append to the review history, increment the run revision, and update the current expert finding within a database transaction. The automation completion timestamp is separate from final completion: a run awaiting review keeps its final completion timestamp unset. HTML and JSON reports include findings, retained rules, evidence metadata, limitations, and review history; raw artifact files remain in the local data directory and are not embedded as a portable evidence bundle. Evidence reads verify stored bytes against their recorded digest; exports also verify frozen inputs. These hashes are integrity checks, not signatures or independent authentication of the whole local record.
+
+Git HEAD is recorded only as contextual metadata where available. The workbench deliberately does not run `git status`, which can invoke repository-defined filters; `gitDirty` remains unknown and the frozen inputs can differ from that commit. If a run's owning process exits before finalisation, reopening its data directory records the abandoned run as interrupted while retaining completed evidence. Start a new assessment to finish the checks; recovery does not resume an arbitrary subprocess.
 
 ## Development and current limits
 
@@ -119,3 +121,7 @@ This runs TypeScript checking and the test suite. Avoid claiming a verification 
 The first version has a fixed six-criterion framework. It does not provide a general framework editor, custom script runners, npm-audit or OpenSSF Scorecard adapters, GitHub/remote governance checks, repository cloning, multi-package traversal, broader language assessment, local-model judgments, authenticated independent reviewers, or hosted collaboration. Input capture excludes application source code, installed dependencies, and hosting settings; each selected input is limited to 8 MiB.
 
 See [architecture](docs/architecture.md) and [reuse analysis](docs/reuse-analysis.md) for implementation boundaries.
+
+## Prepared tools on this workspace
+
+The initial local checkout has a verified OSV-Scanner 2.6.0 binary and a downloaded npm advisory database in its ignored `.tools/` directory. The launcher uses tools from its own application installation, never from the assessed project. `npm start` therefore supports the prepared offline scan on this machine. These machine-specific files are not committed to Git; other checkouts should follow the OSV setup instructions above. The release and database checksums are recorded in `.tools/INSTALLATION.json`.

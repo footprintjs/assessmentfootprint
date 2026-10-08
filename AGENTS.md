@@ -8,7 +8,7 @@ AssessmentFootprint is a local Node 24+ application, currently private and unpub
 - Preserve the distinction between source evidence, criterion findings, and human review. Every factual result must come from captured bytes, actual tool output, or an explicitly attributed reviewer decision.
 - Keep criteria narrow and versioned. Changes to the built-in catalogue/rules require a framework version and policy-digest review. Missing tools, missing data, invalid output, or unestablished package coverage must never become a passing result.
 - Keep `not_applicable`, `insufficient_evidence`, `not_satisfied`, and `evaluation_error` distinct. Workflow completion does not mean every criterion is satisfied. Preserve documented CLI exit-code precedence.
-- Preserve frozen selected inputs, source hashes, original scanner output, diagnostics, tool versions, limitations, and review history. Do not claim a whole-repository snapshot when only named root inputs were collected.
+- Preserve frozen selected inputs, source hashes, original scanner output, diagnostics, tool versions, retained criterion definitions, revision numbering, limitations, and review history. Keep automation completion separate from final completion. Do not claim a whole-repository snapshot when only named root inputs were collected.
 - FootprintJS actually runs the evaluation chart. Capture trace state/narrative during traversal; do not invent agent events or post-hoc explanations that pretend to be recorded execution.
 
 ## Execution and local boundaries
@@ -17,6 +17,7 @@ AssessmentFootprint is a local Node 24+ application, currently private and unpub
 - Collectors must not install the assessed project, execute its lifecycle/build/test scripts, invoke dependency remediation, or run repository-supplied commands. Use direct executable calls with argument arrays, never a shell assembled from project paths or input.
 - Keep OSV scans on explicit frozen root lockfiles, with Go call analysis disabled. A broader scanner mode requires its own declared scope and meaningful verification.
 - Retain artifact containment/hash checks and the loopback host/origin/session boundary. Render project documents and reviewer text as untrusted data. Do not add arbitrary file-serving endpoints.
+- Keep Git inspection passive: avoid `git status` and repository-defined filters; an unknown dirty state is preferable to fabricated metadata. Preserve abandoned-run detection without presenting process-ID recovery as automatic job continuation.
 - Reviewer identity is locally declared. Do not label a self-assessment as independently authenticated, certified, or endorsed by JRC or another institution.
 
 ## Source and verification

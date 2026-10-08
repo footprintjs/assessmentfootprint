@@ -433,7 +433,7 @@ function renderRun() {
 }
 
 function renderFinding(run, result) {
-  const criterion = criterionFor(result.criterionId);
+  const criterion = (run.criteria || state.catalog).find(item => item.id === result.criterionId);
   const finding = node('details', 'panel finding');
   finding.open = result.status === 'insufficient_evidence' || result.status === 'evaluation_error';
   const summary = node('summary');
@@ -461,7 +461,8 @@ function renderFinding(run, result) {
     const item = button('', 'evidence-button', () => openEvidence(run.id, evidence));
     const evidenceCopy = node('span', 'evidence-button-copy');
     const toolName = toolFor(evidence.toolId)?.name || evidence.toolId;
-    append(evidenceCopy, node('strong', 'evidence-source', evidence.source || evidence.id), node('span', 'evidence-tool', `${toolName} · ${evidence.toolVersion || 'Version not recorded'} · ${formatBytes(evidence.bytes)}`));
+    const displayVersion = (evidence.toolVersion || 'Version not recorded').split('\n')[0].replace(/^osv-scanner version:\s*/i, '');
+    append(evidenceCopy, node('strong', 'evidence-source', evidence.source || evidence.id), node('span', 'evidence-tool', `${toolName} · ${displayVersion} · ${formatBytes(evidence.bytes)}`));
     append(item, evidenceCopy, node('span', 'evidence-arrow', '↗'));
     item.setAttribute('aria-label', `Inspect ${evidence.source || evidence.id}, collected by ${toolName}`);
     evidenceList.append(item);

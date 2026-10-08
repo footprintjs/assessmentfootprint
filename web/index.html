@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A local workspace for evidence-based project assessment.">
+  <title>AssessmentFootprint · Local workspace</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to workspace</a>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Workspace navigation">
+      <a class="brand" href="/" aria-label="AssessmentFootprint home">
+        <span class="brand-mark" aria-hidden="true">af</span>
+        <span>Assessment<span class="brand-sub">Footprint</span></span>
+      </a>
+      <div class="workspace-label"><span class="status-dot"></span> LOCAL WORKSPACE</div>
+      <nav class="navigation">
+        <button class="nav-button active" type="button" data-view="assessment" aria-current="page"><span class="nav-symbol" aria-hidden="true">↗</span> New assessment</button>
+        <button class="nav-button" type="button" data-view="history"><span class="nav-symbol" aria-hidden="true">◷</span> Run history <span class="nav-count" id="history-count">0</span></button>
+        <button class="nav-button" type="button" data-view="tools"><span class="nav-symbol" aria-hidden="true">⌘</span> Tools &amp; setup</button>
+      </nav>
+      <div class="sidebar-note">
+        <span class="small-label">ON THIS COMPUTER</span>
+        <p>Your projects, evidence, and review history stay in this local workspace.</p>
+        <button id="storage-toggle" type="button" class="text-button sidebar-link" aria-expanded="false">Show storage location <span aria-hidden="true">↗</span></button>
+        <code id="storage-path" hidden></code>
+      </div>
+      <div class="sidebar-footer">Evidence first. Conclusions in context.</div>
+    </aside>
+
+    <main id="main" tabindex="-1">
+      <header class="topbar">
+        <div class="breadcrumb">Workspace <span aria-hidden="true">/</span> <strong id="view-label">New assessment</strong></div>
+        <span id="engine-status" class="engine-status"><span class="status-dot"></span> Connecting to local engine</span>
+      </header>
+      <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+
+      <section id="assessment-view" class="view">
+        <header class="page-intro">
+          <div class="eyebrow">PROJECT ASSESSMENT</div>
+          <h1>Let the evidence speak.</h1>
+          <p>Inspect a local project, examine what each check supports, and add your review where judgment is needed.</p>
+          <div class="intro-tags"><span class="tag">Local execution</span><span class="tag">Self-assessment</span><span class="tag">Scoped findings</span></div>
+        </header>
+
+        <div class="assessment-grid">
+          <div class="configuration-stack">
+            <section class="panel" aria-labelledby="project-heading">
+              <div class="section-heading"><span class="step-number">01</span><div><h2 id="project-heading">Choose your project</h2><p>Use a folder already on this computer.</p></div></div>
+              <form id="project-form">
+                <label class="field-label" for="project-path">Project folder</label>
+                <div class="input-action"><input id="project-path" name="projectPath" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/your/project" required aria-describedby="project-help"><button id="inspect-button" type="submit" class="button secondary">Inspect folder</button></div>
+                <p id="project-help" class="field-help">Enter the full folder path. The local engine reads project files from this location.</p>
+              </form>
+              <div id="project-preview" class="project-preview" hidden></div>
+            </section>
+
+            <section class="panel" aria-labelledby="criteria-heading">
+              <div class="section-heading"><span class="step-number">02</span><div><h2 id="criteria-heading">Choose criteria</h2><p>Each criterion has its own rule and evidence requirements.</p></div><button id="restore-defaults" type="button" class="text-button" disabled>Use defaults</button></div>
+              <div id="criterion-list" class="criterion-list"><p class="empty-copy">Loading the assessment framework…</p></div>
+              <div class="selection-footer"><span id="selection-count">No criteria selected</span><span>Results are reported individually</span></div>
+            </section>
+
+            <section class="panel" aria-labelledby="network-heading">
+              <div class="section-heading"><span class="step-number">03</span><div><h2 id="network-heading">Set network access</h2><p>Public advisory lookups are optional. No account is needed.</p></div></div>
+              <fieldset class="network-options"><legend class="sr-only">Network access for this assessment</legend>
+                <label class="network-option"><input type="radio" name="network-mode" value="offline" checked><span><strong>Offline</strong><small>Use local files and installed tools. Online checks may have insufficient evidence.</small></span><span class="tag muted">Default</span></label>
+                <label class="network-option"><input type="radio" name="network-mode" value="online"><span><strong>Allow public lookups</strong><small>Permit supported collectors to fetch public advisory data. See each tool’s network requirements.</small></span></label>
+              </fieldset>
+            </section>
+            <div class="run-controls"><p>Outputs record the project snapshot, evidence, and assessment policy.</p><button id="run-button" type="button" class="button primary" disabled>Run assessment <span aria-hidden="true">↗</span></button></div>
+          </div>
+
+          <aside class="context-stack" aria-label="Assessment context">
+            <section class="context-card dark-card">
+              <span class="small-label">HOW IT WORKS</span><h2>A finding is only as strong as its evidence.</h2>
+              <p>Checks collect evidence. Criterion rules interpret it. Expert review adds an attributed decision.</p>
+              <ol class="process-list"><li><span>1</span> Collect project evidence</li><li><span>2</span> Evaluate each criterion</li><li><span>3</span> Review and export</li></ol>
+            </section>
+            <section class="panel readiness-panel" aria-labelledby="readiness-heading">
+              <div class="compact-heading"><h2 id="readiness-heading">Tool readiness</h2><button type="button" data-view="tools" class="text-button">Setup <span aria-hidden="true">↗</span></button></div>
+              <p class="field-help">Tools for the selected criteria.</p><div id="tool-readiness"><p class="empty-copy">Checking installed tools…</p></div>
+              <p class="readiness-note">An unavailable tool is a limitation, not a negative finding about your project.</p>
+            </section>
+            <section id="live-progress" class="panel progress-panel" hidden aria-labelledby="progress-heading">
+              <div class="compact-heading"><h2 id="progress-heading">Run activity</h2><span id="progress-state" class="badge running">Running</span></div>
+              <p id="progress-project" class="progress-project"></p>
+              <div id="progress-events" class="event-list" aria-live="polite"></div>
+              <button id="open-live-run" type="button" class="text-button" hidden>Open this run <span aria-hidden="true">↗</span></button>
+            </section>
+          </aside>
+        </div>
+      </section>
+
+      <section id="history-view" class="view" hidden>
+        <header class="page-intro compact-intro"><div class="eyebrow">LOCAL RECORD</div><h1>Run history</h1><p>Revisit findings and the evidence behind each assessment.</p></header>
+        <section class="panel history-panel"><div class="compact-heading"><h2>Saved assessments</h2><button id="refresh-history" type="button" class="button secondary small">Refresh</button></div><div id="history-list"></div></section>
+      </section>
+
+      <section id="tools-view" class="view" hidden>
+        <header class="page-intro compact-intro"><div class="eyebrow">LOCAL COLLECTORS</div><h1>Tools &amp; setup</h1><p>See what is available on this computer and how to enable additional evidence collection.</p></header>
+        <div class="tools-toolbar"><p>Tool availability is reported by the installed engine.</p><button id="refresh-tools" type="button" class="button secondary">Check again</button></div>
+        <div id="tools-list" class="tools-grid"></div>
+      </section>
+
+      <section id="run-view" class="view" hidden><div id="run-content"></div></section>
+      <footer class="main-footer">AssessmentFootprint <span aria-hidden="true">·</span> Conclusions apply to the recorded scope and evidence.</footer>
+    </main>
+  </div>
+
+  <dialog id="evidence-dialog" class="evidence-dialog" aria-labelledby="evidence-title">
+    <div class="dialog-top"><div><div class="eyebrow">EVIDENCE INSPECTOR</div><h2 id="evidence-title">Original tool output</h2></div><button id="close-evidence" type="button" class="icon-button" aria-label="Close evidence inspector">×</button></div>
+    <div id="evidence-metadata"></div>
+    <div class="raw-heading"><h3>Original output</h3><span>Read-only</span></div>
+    <p id="evidence-load-status" role="status"></p>
+    <pre id="evidence-output" tabindex="0"></pre>
+    <p class="evidence-footnote">Original output is preserved separately from criterion evaluations and human reviews.</p>
+  </dialog>
+</body>
+</html>

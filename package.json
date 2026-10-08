@@ -1,12 +1,16 @@
 {
   "name": "@footprintjs/assessment",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A local software assessment workbench with traceable evidence and human review.",
   "license": "MIT",
   "type": "module",
   "private": true,
-  "engines": { "node": ">=24.0.0" },
-  "bin": { "assessment": "bin/assessment.mjs" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "bin": {
+    "assessment": "bin/assessment.mjs"
+  },
   "scripts": {
     "start": "node bin/assessment.mjs studio",
     "test": "node --test tests/*.test.ts",
@@ -17,6 +21,14 @@
     "@types/node": "^24.0.0",
     "typescript": "^5.9.3"
   },
-  "dependencies": { "footprintjs": "9.44.1" },
-  "files": ["bin", "src", "web", "README.md", "LICENSE"]
+  "dependencies": {
+    "footprintjs": "9.44.1"
+  },
+  "files": [
+    "bin",
+    "src",
+    "web",
+    "README.md",
+    "LICENSE"
+  ]
 }

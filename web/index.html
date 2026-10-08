@@ -19,6 +19,7 @@
       <div class="workspace-label"><span class="status-dot"></span> LOCAL WORKSPACE</div>
       <nav class="navigation">
         <button class="nav-button active" type="button" data-view="assessment" aria-current="page"><span class="nav-symbol" aria-hidden="true">↗</span> New assessment</button>
+        <button class="nav-button" type="button" data-view="templates"><span class="nav-symbol" aria-hidden="true">▤</span> Templates</button>
         <button class="nav-button" type="button" data-view="history"><span class="nav-symbol" aria-hidden="true">◷</span> Run history <span class="nav-count" id="history-count">0</span></button>
         <button class="nav-button" type="button" data-view="tools"><span class="nav-symbol" aria-hidden="true">⌘</span> Tools &amp; setup</button>
       </nav>
@@ -59,13 +60,18 @@
             </section>
 
             <section class="panel" aria-labelledby="criteria-heading">
-              <div class="section-heading"><span class="step-number">02</span><div><h2 id="criteria-heading">Choose criteria</h2><p>Each criterion has its own rule and evidence requirements.</p></div><button id="restore-defaults" type="button" class="text-button" disabled>Use defaults</button></div>
+              <div class="section-heading"><span class="step-number">02</span><div><h2 id="criteria-heading">Choose an assessment</h2><p>Reuse a published template or select individual checks.</p></div><button id="restore-defaults" type="button" class="text-button" disabled>Use defaults</button></div>
+              <div class="assessment-template-fields">
+                <div class="form-field"><label class="field-label" for="assessment-template">Assessment template</label><select id="assessment-template" disabled><option value="">One-off checks</option></select></div>
+                <div id="assessment-version-field" class="form-field" hidden><label class="field-label" for="assessment-template-version">Published version</label><select id="assessment-template-version"></select></div>
+              </div>
+              <div id="assessment-template-info" class="template-selection-info" hidden></div>
               <div id="criterion-list" class="criterion-list"><p class="empty-copy">Loading the assessment framework…</p></div>
               <div class="selection-footer"><span id="selection-count">No criteria selected</span><span>Results are reported individually</span></div>
             </section>
 
             <section class="panel" aria-labelledby="network-heading">
-              <div class="section-heading"><span class="step-number">03</span><div><h2 id="network-heading">Set network access</h2><p>Public advisory lookups are optional. No account is needed.</p></div></div>
+              <div class="section-heading"><span class="step-number">03</span><div><h2 id="network-heading">Network access</h2><p id="network-description">Public advisory lookups are optional. No account is needed.</p></div></div>
               <fieldset class="network-options"><legend class="sr-only">Network access for this assessment</legend>
                 <label class="network-option"><input type="radio" name="network-mode" value="offline" checked><span><strong>Offline</strong><small>Use local files and installed tools. Online checks may have insufficient evidence.</small></span><span class="tag muted">Default</span></label>
                 <label class="network-option"><input type="radio" name="network-mode" value="online"><span><strong>Allow public lookups</strong><small>Permit supported collectors to fetch public advisory data. See each tool’s network requirements.</small></span></label>
@@ -92,6 +98,26 @@
               <button id="open-live-run" type="button" class="text-button" hidden>Open this run <span aria-hidden="true">↗</span></button>
             </section>
           </aside>
+        </div>
+      </section>
+
+      <section id="templates-view" class="view" hidden>
+        <header class="page-intro compact-intro"><div class="eyebrow">REUSABLE ASSESSMENTS</div><h1>Templates</h1><p>Define the evidence and rules once. Publish a fixed version to reuse from this workspace or the CLI.</p></header>
+        <div class="templates-toolbar"><p>Published versions stay unchanged. Edits create a new version.</p><div class="template-toolbar-actions"><button id="import-template" type="button" class="button secondary">Import JSON</button><input id="template-import-file" type="file" accept=".json,application/json" hidden><button id="new-template" type="button" class="button primary">New template <span aria-hidden="true">+</span></button></div></div>
+        <div class="templates-layout">
+          <aside class="template-library" aria-labelledby="template-library-heading"><div class="compact-heading"><h2 id="template-library-heading">Saved templates</h2><button id="refresh-templates" type="button" class="text-button">Refresh</button></div><div id="template-library-list"><p class="empty-copy">Loading templates…</p></div></aside>
+          <section class="panel template-builder" aria-label="Template builder">
+            <div id="template-builder-empty" class="builder-empty"><span class="eyebrow">YOUR ASSESSMENT METHOD</span><h2 id="template-builder-heading">Choose a template or start a new one.</h2><p>Set the project inputs, deterministic rules, and reviewer requirements that define your assessment.</p><button id="builder-start" type="button" class="button secondary">Create a template</button></div>
+            <form id="template-form" hidden>
+              <div class="builder-header"><div><div class="eyebrow">TEMPLATE BUILDER</div><h2 id="template-editor-title">New template</h2><p id="template-version-note"></p></div><span id="template-editor-badge" class="tag">Draft</span></div>
+              <div id="template-publish-message" class="notice" role="status" aria-live="polite" hidden></div>
+              <div id="template-version-controls" class="template-version-controls" hidden><div><label class="field-label" for="editor-template-version">Load a published version</label><select id="editor-template-version"></select></div><button id="export-template" type="button" class="button secondary small">Export published JSON</button></div>
+              <div class="editor-basic-fields"><div><label class="field-label" for="template-name">Template name</label><input id="template-name" type="text" required maxlength="160" placeholder="Name this assessment"></div><div><label class="field-label" for="template-description">Purpose &amp; scope</label><textarea id="template-description" rows="3" maxlength="2000" placeholder="Describe what this template assesses and the limits of its conclusions."></textarea></div><div><label class="field-label" for="template-network">Network policy</label><select id="template-network"><option value="offline">Offline · local evidence only</option><option value="online">Allow public advisory lookups</option></select><p class="field-help">The published version fixes this policy for every run.</p></div></div>
+              <div class="builder-criteria-heading"><div><h3>Criteria &amp; evidence</h3><p>Configure a collector and a rule for each criterion.</p></div><button id="add-template-criterion" type="button" class="button secondary small">Add criterion +</button></div>
+              <div id="template-criteria-editor" class="template-criteria-editor"></div>
+              <div class="builder-actions"><div class="builder-actions-copy"><p id="publish-version-note">Publishing saves an immutable first version.</p><button id="copy-template" type="button" class="text-button" hidden>Make an editable copy ↗</button></div><button id="publish-template" type="submit" class="button primary">Publish version 1</button><button id="use-editor-template" type="button" class="button secondary" hidden>Use published version ↗</button></div>
+            </form>
+          </section>
         </div>
       </section>
 

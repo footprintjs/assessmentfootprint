@@ -4,6 +4,8 @@ const state = {
   catalog: [], tools: [], runs: [], selected: new Set(), sessionToken: '',
   run: null, project: null, view: 'assessment', ready: false, submitting: false, inspecting: false,
   pollTimer: null, activeRunId: null, evidenceRequest: 0, reviewBusy: false,
+  templates: [], builtinTemplate: null, assessmentTemplate: null, templateSelectionRequest: 0,
+  templateSelectionLoading: false, editor: null, editorRequest: 0, publishing: false,
 };
 const $ = (selector, root = document) => root.querySelector(selector);
 const statusLabels = {
@@ -12,7 +14,7 @@ const statusLabels = {
   evaluation_error: 'Evaluation error', running: 'Running', awaiting_review: 'Awaiting review',
   completed: 'Completed', interrupted: 'Interrupted',
 };
-const viewLabels = { assessment: 'New assessment', history: 'Run history', tools: 'Tools & setup', run: 'Assessment findings' };
+const viewLabels = { assessment: 'New assessment', templates: 'Templates', history: 'Run history', tools: 'Tools & setup', run: 'Assessment findings' };
 
 function node(tag, className, content) {
   const element = document.createElement(tag);
@@ -43,6 +45,15 @@ function formatDate(value, options) {
 function shortHash(value) { return value ? `${String(value).slice(0, 12)}…` : 'Not recorded'; }
 function criterionFor(id) { return state.catalog.find(item => item.id === id); }
 function toolFor(id) { return state.tools.find(item => item.id === id); }
+function isOneOffPolicy(template) { return Boolean(template && (template.id === 'one-off' || template.version === 0 || template.version === '0')); }
+function capturedPolicyLabel(template) {
+  return isOneOffPolicy(template) ? `${template.name} · captured one-off policy` : `${template.name} · v${template.version}`;
+}
+function isIntrinsicExpertCriterion(criterion) {
+  if (criterion.evaluation?.kind === 'expert') return true;
+  if (criterion.evaluation?.kind === 'builtin') return criterionFor(criterion.evaluation.criterionId)?.mode === 'expert';
+  return !criterion.evaluation && criterion.mode === 'expert';
+}
 function showNotice(message, error = false) {
   const element = $('#notice');
   element.textContent = message;
@@ -62,7 +73,9 @@ async function api(path, options = {}) {
   if (!response.ok) {
     let message = `The local engine returned an error (${response.status}).`;
     try { const body = await response.json(); if (body.error) message = body.error; } catch { /* Use the HTTP error. */ }
-    throw new Error(message);
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -82,12 +95,13 @@ function setView(view, focus = false) {
 function renderCriteria() {
   const list = $('#criterion-list');
   list.replaceChildren();
-  if (!state.catalog.length) {
+  const criteria = state.assessmentTemplate?.criteria || state.catalog;
+  if (!criteria.length) {
     list.append(node('p', 'empty-copy', 'No criteria are available in this framework.'));
     updateSelection();
     return;
   }
-  for (const criterion of state.catalog) {
+  for (const criterion of criteria) {
     const card = node('div', 'criterion-card');
     card.classList.toggle('selected', state.selected.has(criterion.id));
     const label = node('label', 'criterion-choice');
@@ -95,11 +109,13 @@ function renderCriteria() {
     input.type = 'checkbox';
     input.value = criterion.id;
     input.checked = state.selected.has(criterion.id);
-    input.disabled = state.submitting;
+    input.disabled = state.submitting || Boolean(state.assessmentTemplate);
     const copy = node('span', 'criterion-copy');
     const titleRow = node('span', 'criterion-title-row');
     const title = node('span', 'criterion-title', criterion.title);
-    const mode = node('span', `mode-badge ${criterion.mode === 'expert' ? 'expert' : ''}`, criterion.mode === 'expert' ? 'Expert review' : 'Automatic');
+    const needsReview = criterion.requiresReview || criterion.mode === 'expert';
+    const modeLabel = isIntrinsicExpertCriterion(criterion) ? 'Expert review' : needsReview ? 'Automatic + review' : 'Automatic';
+    const mode = node('span', `mode-badge ${needsReview ? 'expert' : ''}`, modeLabel);
     append(titleRow, title, mode);
     append(copy, node('div', 'criterion-id', `${criterion.id} · ${criterion.dimension}`), titleRow, node('p', 'criterion-description', criterion.description));
     append(label, input, copy);
@@ -122,7 +138,8 @@ function renderCriteria() {
 function updateSelection() {
   const count = state.selected.size;
   $('#selection-count').textContent = `${count} ${count === 1 ? 'criterion' : 'criteria'} selected`;
-  $('#run-button').disabled = !state.ready || !count || state.submitting || state.inspecting || !$('#project-path').value.trim();
+  $('#run-button').disabled = !state.ready || !count || state.submitting || state.inspecting || state.templateSelectionLoading || !$('#project-path').value.trim();
+  $('#restore-defaults').hidden = Boolean(state.assessmentTemplate);
   $('#restore-defaults').disabled = !state.ready || state.submitting;
   renderReadiness();
 }
@@ -130,7 +147,8 @@ function updateSelection() {
 function renderReadiness() {
   const container = $('#tool-readiness');
   container.replaceChildren();
-  const tools = state.tools.filter(tool => (tool.supportedCriteria || []).some(id => state.selected.has(id)));
+  const collectorIds = state.assessmentTemplate ? new Set(state.assessmentTemplate.criteria.map(criterion => criterion.collector.toolId)) : null;
+  const tools = state.tools.filter(tool => collectorIds ? collectorIds.has(tool.id) : (tool.supportedCriteria || []).some(id => state.selected.has(id)));
   if (!tools.length) {
     container.append(node('p', 'empty-copy', state.selected.size ? 'No external tools are required by the selected criteria.' : 'Select criteria to see their tools.'));
     return;
@@ -212,6 +230,7 @@ function renderHistory() {
     const tr = node('tr');
     const project = node('td');
     append(project, node('div', 'history-project', run.subject.name), node('div', 'history-path mono', run.subject.path));
+    if (run.template) project.append(node('div', 'history-template', capturedPolicyLabel(run.template)));
     project.title = run.subject.path;
     const status = append(node('td'), badge(run.status));
     const date = node('td', 'history-date', formatDate(run.startedAt));
@@ -284,20 +303,21 @@ function setConfigurationBusy(busy) {
   state.submitting = busy;
   $('#project-path').disabled = busy;
   $('#inspect-button').disabled = busy;
-  document.querySelectorAll('#criterion-list input, input[name="network-mode"]').forEach(input => { input.disabled = busy; });
+  document.querySelectorAll('#criterion-list input, input[name="network-mode"]').forEach(input => { input.disabled = busy || Boolean(state.assessmentTemplate); });
+  $('#assessment-template').disabled = busy || state.templateSelectionLoading;
+  $('#assessment-template-version').disabled = busy || state.templateSelectionLoading;
   $('#run-button').textContent = busy ? 'Assessment running…' : 'Run assessment ↗';
   updateSelection();
 }
 
 async function startRun() {
-  if (state.submitting || state.inspecting || !state.ready) return;
+  if (state.submitting || state.inspecting || state.templateSelectionLoading || !state.ready) return;
   if (!$('#project-form').reportValidity()) return;
   if (!state.selected.size) { showNotice('Select at least one criterion.', true); return; }
   clearNotice();
-  const input = {
-    projectPath: $('#project-path').value.trim(), criterionIds: [...state.selected],
-    networkMode: $('input[name="network-mode"]:checked').value,
-  };
+  const input = state.assessmentTemplate
+    ? { projectPath: $('#project-path').value.trim(), templateId: state.assessmentTemplate.id, templateVersion: state.assessmentTemplate.version }
+    : { projectPath: $('#project-path').value.trim(), criterionIds: [...state.selected], networkMode: $('input[name="network-mode"]:checked').value };
   setConfigurationBusy(true);
   state.activeRunId = null;
   renderProgress(null);
@@ -377,7 +397,9 @@ function renderRun() {
   const back = button('← All assessments', 'text-button run-back', () => setView('history', true));
   const intro = node('header', 'page-intro run-intro');
   const title = node('div');
+  const oneOffPolicy = isOneOffPolicy(run.template || run.framework);
   append(title, node('div', 'eyebrow', 'ASSESSMENT FINDINGS'), node('h1', '', run.subject.name), node('p', '', run.subject.path));
+  if (run.template) title.append(node('div', 'run-template-caption', oneOffPolicy ? capturedPolicyLabel(run.template) : `${run.template.name} · published version ${run.template.version}`));
   const tags = node('div', 'intro-tags');
   append(tags, badge(run.status), node('span', 'tag', 'Self-assessment'), node('span', 'tag muted', run.networkMode === 'online' ? 'Public lookups allowed' : 'Offline run'));
   title.append(tags);
@@ -394,11 +416,14 @@ function renderRun() {
   const info = node('dl', 'metadata-grid');
   append(info,
     metadata('Started', formatDate(run.startedAt)), metadata('Finished', run.completedAt ? formatDate(run.completedAt) : 'Not yet finalised'),
-    metadata('Framework', `${run.framework.name} · ${run.framework.version}`), metadata('Git commit', run.subject.gitCommit, false, true),
+    metadata('Framework', oneOffPolicy ? `${run.framework.name} · one-off policy` : `${run.framework.name} · ${run.framework.version}`), metadata('Git commit', run.subject.gitCommit, false, true),
     metadata('Working tree', run.subject.gitDirty === null ? 'Not recorded' : run.subject.gitDirty ? 'Uncommitted changes present' : 'Clean'),
     metadata('Snapshot scope', run.sourceSnapshot.scope), metadata('Source snapshot SHA-256', run.sourceSnapshot.digest, true, true),
     metadata('Policy digest', run.framework.policyDigest, true, true), metadata('Run identifier', run.id, true, true));
   context.append(info);
+  if (run.template) {
+    append(info, metadata(oneOffPolicy ? 'Captured one-off policy' : 'Captured template', capturedPolicyLabel(run.template)), metadata(oneOffPolicy ? 'Policy identifier' : 'Template identifier', run.template.id), metadata(oneOffPolicy ? 'Policy SHA-256' : 'Template policy SHA-256', run.template.policyDigest, true, true));
+  }
   const workflowEvidence = run.evidence.filter(evidence => evidence.toolId === 'footprintjs');
   if (workflowEvidence.length) {
     const workflowLinks = node('div', 'workflow-evidence');
@@ -433,7 +458,7 @@ function renderRun() {
 }
 
 function renderFinding(run, result) {
-  const criterion = (run.criteria || state.catalog).find(item => item.id === result.criterionId);
+  const criterion = (run.criteria || state.catalog).find(item => item.id === result.criterionId) || run.template?.criteria.find(item => item.id === result.criterionId);
   const finding = node('details', 'panel finding');
   finding.open = result.status === 'insufficient_evidence' || result.status === 'evaluation_error';
   const summary = node('summary');
@@ -442,9 +467,17 @@ function renderFinding(run, result) {
   append(summary, copy, badge(result.status));
   const body = node('div', 'finding-body');
   body.append(node('p', 'finding-rationale', result.rationale));
+  if (result.automaticResult) {
+    const provisional = node('div', 'provisional-result');
+    append(provisional, node('h4', '', 'Retained automatic finding'), badge(result.automaticResult.status), node('p', '', result.automaticResult.rationale), node('small', '', 'This is the provisional rule result. The criterion’s final outcome includes its required human review.'));
+    body.append(provisional);
+  }
   if (criterion) {
     const rubric = node('details', 'criterion-details');
-    append(rubric, node('summary', '', 'Assessment rule'), node('p', '', criterion.rule));
+    append(rubric, node('summary', '', 'Assessment rule & evidence requirements'), node('p', '', criterion.rule));
+    const requirements = node('ul');
+    (criterion.evidenceRequirements || []).forEach(item => requirements.append(node('li', '', item)));
+    if (requirements.childElementCount) rubric.append(requirements);
     body.append(rubric);
   }
   if (result.coverage?.length) {
@@ -488,7 +521,8 @@ function renderFinding(run, result) {
     });
     body.append(history);
   }
-  if (criterion?.mode === 'expert' && run.status !== 'running' && run.status !== 'interrupted') body.append(renderReviewForm(run, criterion, reviews));
+  const requiresReview = criterion?.mode === 'expert' || run.template?.criteria.find(item => item.id === result.criterionId)?.requiresReview;
+  if (requiresReview && run.status !== 'running' && run.status !== 'interrupted') body.append(renderReviewForm(run, criterion, reviews));
   append(finding, summary, body);
   return finding;
 }
@@ -587,15 +621,539 @@ async function downloadExport(format, trigger) {
   finally { trigger.disabled = false; trigger.textContent = original; }
 }
 
+function templateCriterionInput(criterion) {
+  const evaluation = { ...criterion.evaluation };
+  if (Array.isArray(evaluation.field)) evaluation.field = [...evaluation.field];
+  if (evaluation.kind === 'json-field' && evaluation.operator === 'exists') delete evaluation.expected;
+  return {
+    id: criterion.id, title: criterion.title, description: criterion.description,
+    dimension: criterion.dimension, evidenceRequirements: [...(criterion.evidenceRequirements || [])],
+    collector: { toolId: criterion.collector.toolId, paths: [...criterion.collector.paths] },
+    evaluation, requiresReview: Boolean(criterion.requiresReview),
+  };
+}
+
+function templateDraftFrom(version) {
+  return {
+    name: version.name, description: version.description, networkMode: version.networkMode,
+    criteria: version.criteria.map(templateCriterionInput),
+  };
+}
+
+function renderTemplateLibrary() {
+  const list = $('#template-library-list');
+  list.replaceChildren();
+  if (!state.templates.length) {
+    list.append(node('p', 'empty-copy', 'No saved templates are available. Create one to define your assessment.'));
+    return;
+  }
+  for (const template of state.templates) {
+    const card = node('article', 'template-library-card');
+    card.classList.toggle('active', state.editor?.source?.id === template.id);
+    const title = node('div', 'template-library-title');
+    append(title, node('h3', '', template.name), node('span', 'tag muted', template.builtIn ? 'Built-in' : 'Custom'));
+    const actions = node('div', 'template-library-actions');
+    append(actions,
+      button('Open', 'button secondary small', () => openTemplateEditor(template.id)),
+      button('Use latest ↗', 'text-button', async () => {
+        if (await selectAssessmentTemplate(template.id)) setView('assessment', true);
+      }));
+    append(card, title, node('p', '', template.description), node('div', 'template-library-meta', `Version ${template.latestVersion} · ${template.versionCount} ${template.versionCount === 1 ? 'published version' : 'published versions'}`), actions);
+    list.append(card);
+  }
+}
+
+function renderAssessmentTemplateSelector() {
+  const select = $('#assessment-template');
+  select.replaceChildren();
+  const oneOff = node('option', '', 'One-off checks'); oneOff.value = ''; select.append(oneOff);
+  for (const template of state.templates) {
+    const option = node('option', '', `${template.name} · latest v${template.latestVersion}`);
+    option.value = template.id; select.append(option);
+  }
+  select.value = state.assessmentTemplate?.id || '';
+  select.disabled = !state.ready || state.submitting || state.templateSelectionLoading;
+}
+
+function renderAssessmentVersionOptions(versions, selectedVersion) {
+  const select = $('#assessment-template-version');
+  select.replaceChildren();
+  [...versions].sort((a, b) => b.version - a.version).forEach(item => {
+    const option = node('option', '', `Version ${item.version}`); option.value = item.version; select.append(option);
+  });
+  select.value = String(selectedVersion);
+}
+
+async function refreshTemplates() {
+  state.templates = await api('/api/templates');
+  renderTemplateLibrary();
+  renderAssessmentTemplateSelector();
+  return state.templates;
+}
+
+async function selectAssessmentTemplate(id, version) {
+  if (state.submitting) { showNotice('Finish the current assessment before changing its template.', true); return false; }
+  const request = ++state.templateSelectionRequest;
+  clearNotice();
+  if (!id) {
+    state.assessmentTemplate = null;
+    state.templateSelectionLoading = false;
+    state.selected = new Set(state.catalog.filter(criterion => criterion.defaultEnabled).map(criterion => criterion.id));
+    $('input[name="network-mode"][value="offline"]').checked = true;
+    $('#assessment-version-field').hidden = true;
+    $('#assessment-template-info').hidden = true;
+    $('#network-description').textContent = 'Public advisory lookups are optional. No account is needed.';
+    document.querySelectorAll('input[name="network-mode"]').forEach(input => { input.disabled = false; });
+    renderAssessmentTemplateSelector(); renderCriteria();
+    return true;
+  }
+  state.templateSelectionLoading = true;
+  $('#assessment-template').disabled = true;
+  $('#assessment-template-version').disabled = true;
+  updateSelection();
+  try {
+    const [template, versions] = await Promise.all([
+      api(`/api/templates/${encodeURIComponent(id)}${version ? `?version=${encodeURIComponent(version)}` : ''}`),
+      api(`/api/templates/${encodeURIComponent(id)}/versions`),
+    ]);
+    if (request !== state.templateSelectionRequest) return false;
+    state.assessmentTemplate = template;
+    if (template.builtIn) state.builtinTemplate = template;
+    state.selected = new Set(template.criteria.map(criterion => criterion.id));
+    renderAssessmentVersionOptions(versions, template.version);
+    $('#assessment-version-field').hidden = false;
+    const info = $('#assessment-template-info');
+    info.replaceChildren();
+    append(info, node('p', '', template.description), node('p', 'field-help', 'This published version fixes its criteria, evidence paths, rules, and network policy.'), node('code', 'selected-template-digest', `Policy SHA-256: ${shortHash(template.policyDigest)}`), button(template.builtIn ? 'View or copy template ↗' : 'Edit a new version ↗', 'text-button', () => openTemplateEditor(template.id, template.version)));
+    info.hidden = false;
+    const network = $(`input[name="network-mode"][value="${template.networkMode === 'online' ? 'online' : 'offline'}"]`);
+    network.checked = true;
+    document.querySelectorAll('input[name="network-mode"]').forEach(input => { input.disabled = true; });
+    $('#network-description').textContent = `Fixed by ${template.name}, version ${template.version}. Publish a new version to change this policy.`;
+    renderAssessmentTemplateSelector(); renderCriteria();
+    return true;
+  } catch (error) {
+    if (request === state.templateSelectionRequest) {
+      renderAssessmentTemplateSelector();
+      showNotice(`Template could not be loaded: ${error.message}`, true);
+    }
+    return false;
+  } finally {
+    if (request === state.templateSelectionRequest) {
+      state.templateSelectionLoading = false;
+      $('#assessment-template').disabled = state.submitting;
+      $('#assessment-template-version').disabled = state.submitting;
+      updateSelection();
+    }
+  }
+}
+
+function newTemplateCriterion(criteria = []) {
+  let suffix = 1;
+  while (criteria.some(criterion => criterion.id === `CUSTOM-${String(suffix).padStart(2, '0')}`)) suffix += 1;
+  return {
+    id: `CUSTOM-${String(suffix).padStart(2, '0')}`, title: '', description: '', dimension: '',
+    evidenceRequirements: [], collector: { toolId: 'project-files', paths: [] },
+    evaluation: { kind: 'files', match: 'all', minimumBytes: 1 }, requiresReview: false,
+  };
+}
+
+function createTemplateEditor(draft, origin = '') {
+  state.editorRequest += 1;
+  state.editor = { source: null, draft, versions: [], expectedVersion: undefined, readonly: false, dirty: true, origin };
+  renderTemplateEditor(); renderTemplateLibrary(); setView('templates', true);
+}
+
+function startNewTemplate() {
+  createTemplateEditor({ name: '', description: '', networkMode: 'offline', criteria: [newTemplateCriterion()] });
+}
+
+function editorMessage(message, error = false) {
+  const element = $('#template-publish-message');
+  element.replaceChildren(node('span', '', message));
+  element.classList.toggle('error', error); element.hidden = false;
+  element.setAttribute('role', error ? 'alert' : 'status');
+  element.tabIndex = -1;
+  if (error) element.focus(); else element.scrollIntoView({ block: 'nearest' });
+}
+
+async function openTemplateEditor(id, version) {
+  if (state.publishing) { showNotice('Wait for publishing to finish before loading another template.', true); return; }
+  const request = ++state.editorRequest;
+  setView('templates', true); clearNotice();
+  try {
+    const [template, versions] = await Promise.all([
+      api(`/api/templates/${encodeURIComponent(id)}${version ? `?version=${encodeURIComponent(version)}` : ''}`),
+      api(`/api/templates/${encodeURIComponent(id)}/versions`),
+    ]);
+    if (request !== state.editorRequest) return;
+    if (template.builtIn) state.builtinTemplate = template;
+    const latestVersion = Math.max(template.version, ...versions.map(item => item.version));
+    state.editor = {
+      source: template, draft: templateDraftFrom(template), versions,
+      expectedVersion: latestVersion, readonly: template.builtIn, dirty: false, origin: '',
+    };
+    renderTemplateEditor(); renderTemplateLibrary();
+  } catch (error) { if (request === state.editorRequest) showNotice(`Template could not be loaded: ${error.message}`, true); }
+}
+
+function markEditorDirty() {
+  if (!state.editor || state.editor.readonly) return;
+  state.editor.dirty = true;
+  $('#template-publish-message').hidden = true;
+  updateEditorActions();
+}
+
+function updateEditorActions() {
+  const editor = state.editor;
+  if (!editor) return;
+  const { source, readonly, dirty } = editor;
+  const nextVersion = source ? editor.expectedVersion + 1 : 1;
+  $('#template-editor-title').textContent = source ? source.name : 'New template';
+  $('#template-editor-badge').textContent = readonly ? 'Built-in · read-only' : dirty ? 'Unpublished draft' : `Published v${source?.version || 1}`;
+  $('#template-version-note').textContent = source
+    ? `Viewing version ${source.version}, published ${formatDate(source.createdAt)}.`
+    : editor.origin || 'Define a reusable assessment for your local projects.';
+  $('#publish-version-note').textContent = readonly
+    ? 'This built-in template is fixed. Make an editable copy to create your own version.'
+    : source ? `Publishing creates version ${nextVersion}. Existing versions and their runs stay unchanged.` : 'Publishing saves an immutable first version.';
+  $('#publish-template').hidden = readonly;
+  $('#publish-template').disabled = state.publishing || !editor.draft.criteria.length || Boolean(source && !dirty);
+  $('#publish-template').textContent = state.publishing ? 'Publishing…' : `Publish version ${nextVersion}`;
+  $('#copy-template').hidden = !source;
+  $('#copy-template').textContent = readonly ? 'Make an editable copy ↗' : 'Copy as a new template ↗';
+  $('#copy-template').disabled = state.publishing;
+  $('#use-editor-template').hidden = !source || dirty;
+  $('#use-editor-template').disabled = state.submitting || state.publishing;
+  $('#add-template-criterion').hidden = readonly;
+  $('#add-template-criterion').disabled = state.publishing;
+  $('#template-form').querySelectorAll('input, textarea, select').forEach(input => {
+    input.disabled = state.publishing || input.dataset.fixed === 'true' || (readonly && input.id !== 'editor-template-version');
+  });
+  $('#template-form').querySelectorAll('.criterion-editor-order button').forEach(control => { control.disabled = state.publishing || control.dataset.boundary === 'true'; });
+  $('#export-template').disabled = !source || state.publishing;
+  $('#new-template').disabled = state.publishing;
+  $('#import-template').disabled = state.publishing;
+}
+
+function renderTemplateEditor() {
+  const editor = state.editor;
+  $('#template-builder-empty').hidden = Boolean(editor);
+  $('#template-form').hidden = !editor;
+  if (!editor) return;
+  $('#template-publish-message').hidden = true;
+  $('#template-name').value = editor.draft.name;
+  $('#template-description').value = editor.draft.description;
+  $('#template-network').value = editor.draft.networkMode;
+  const versions = $('#editor-template-version');
+  versions.replaceChildren();
+  [...editor.versions].sort((a, b) => b.version - a.version).forEach(item => {
+    const option = node('option', '', `Version ${item.version} · ${formatDate(item.createdAt)}`); option.value = item.version; versions.append(option);
+  });
+  if (editor.source) versions.value = String(editor.source.version);
+  $('#template-version-controls').hidden = !editor.source;
+  renderEditorCriteria();
+  updateEditorActions();
+}
+
+function editorField(label, control, help) {
+  const wrapper = node('div', 'editor-field');
+  const labelNode = node('label', 'field-label', label); labelNode.htmlFor = control.id;
+  append(wrapper, labelNode, control, help ? node('p', 'field-help', help) : null);
+  return wrapper;
+}
+
+function textEditorControl(id, value, onChange, options = {}) {
+  const control = node(options.multiline ? 'textarea' : 'input');
+  if (!options.multiline) control.type = 'text'; else control.rows = options.rows || 3;
+  control.id = id; control.value = value === undefined || value === null ? '' : value;
+  control.required = options.required !== false;
+  if (options.placeholder) control.placeholder = options.placeholder;
+  if (options.maxLength) control.maxLength = options.maxLength;
+  control.addEventListener('input', () => { onChange(control.value); markEditorDirty(); });
+  return control;
+}
+
+function selectEditorControl(id, value, choices, onChange) {
+  const control = node('select'); control.id = id;
+  choices.forEach(([optionValue, label]) => { const option = node('option', '', label); option.value = optionValue; control.append(option); });
+  control.value = value;
+  control.addEventListener('change', () => { onChange(control.value); markEditorDirty(); });
+  return control;
+}
+
+function numericEditorControl(id, value, onChange, maximum) {
+  const control = node('input'); control.type = 'number'; control.id = id;
+  control.min = '0'; control.step = '1'; control.required = true; control.value = String(value);
+  if (maximum !== undefined) control.max = String(maximum);
+  control.addEventListener('input', () => { onChange(control.value === '' ? NaN : Number(control.value)); markEditorDirty(); });
+  return control;
+}
+
+function splitLines(text) { return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean); }
+
+function applyBuiltinCriterion(index, builtinId) {
+  const original = state.builtinTemplate?.criteria.find(criterion => criterion.id === builtinId);
+  if (!original) { editorMessage('The built-in criterion definition is unavailable. Reload the templates.', true); return; }
+  state.editor.draft.criteria[index] = templateCriterionInput(original);
+  state.editor.draft.criteria[index].evaluation = { kind: 'builtin', criterionId: original.evaluation?.criterionId || original.id };
+  markEditorDirty(); renderEditorCriteria(); updateEditorActions();
+}
+
+function changeEvaluationKind(index, kind) {
+  const criterion = state.editor.draft.criteria[index];
+  if (kind === 'builtin') {
+    const original = state.builtinTemplate?.criteria.find(item => item.evaluation?.kind === 'builtin');
+    if (!original) { editorMessage('No built-in deterministic rules are available.', true); return; }
+    applyBuiltinCriterion(index, original.id); return;
+  }
+  if (kind === 'files') criterion.evaluation = { kind, match: 'all', minimumBytes: 1 };
+  else if (kind === 'json-field') criterion.evaluation = { kind, field: [], operator: 'exists' };
+  else if (kind === 'vulnerabilities') criterion.evaluation = { kind, maxFindings: 0 };
+  else criterion.evaluation = { kind: 'expert' };
+  criterion.collector.toolId = kind === 'vulnerabilities' ? 'osv-scanner' : 'project-files';
+  if (kind === 'expert') criterion.requiresReview = true;
+  delete criterion._expectedText;
+  markEditorDirty(); renderEditorCriteria(); updateEditorActions();
+}
+
+function renderEditorCriteria() {
+  const editor = state.editor;
+  const list = $('#template-criteria-editor'); list.replaceChildren();
+  if (!editor) return;
+  if (!editor.draft.criteria.length) { list.append(node('p', 'empty-copy', 'Add at least one criterion before publishing.')); return; }
+  editor.draft.criteria.forEach((criterion, index) => {
+    const prefix = `template-criterion-${index}`;
+    const card = node('details', 'criterion-editor'); card.open = true;
+    const summary = node('summary');
+    const summaryCopy = node('span', 'criterion-editor-summary');
+    const summaryNumber = node('span', 'step-number', String(index + 1).padStart(2, '0'));
+    const summaryTitle = node('span', '', criterion.title || 'Untitled criterion');
+    append(summaryCopy, summaryNumber, summaryTitle);
+    append(summary, summaryCopy, node('span', 'mode-badge', criterion.id || 'Set an identifier'));
+    card.append(summary);
+    const body = node('div', 'criterion-editor-body');
+    if (!editor.readonly) {
+      const order = node('div', 'criterion-editor-order');
+      const up = button('↑ Move up', 'text-button', () => {
+        const items = editor.draft.criteria; [items[index - 1], items[index]] = [items[index], items[index - 1]];
+        markEditorDirty(); renderEditorCriteria(); updateEditorActions();
+      });
+      up.disabled = index === 0; up.dataset.boundary = String(index === 0); up.setAttribute('aria-label', `Move criterion ${index + 1} up`);
+      const down = button('↓ Move down', 'text-button', () => {
+        const items = editor.draft.criteria; [items[index + 1], items[index]] = [items[index], items[index + 1]];
+        markEditorDirty(); renderEditorCriteria(); updateEditorActions();
+      });
+      down.disabled = index === editor.draft.criteria.length - 1; down.dataset.boundary = String(index === editor.draft.criteria.length - 1); down.setAttribute('aria-label', `Move criterion ${index + 1} down`);
+      const remove = button('Remove criterion', 'text-button remove-criterion', () => { editor.draft.criteria.splice(index, 1); markEditorDirty(); renderEditorCriteria(); updateEditorActions(); });
+      remove.setAttribute('aria-label', `Remove criterion ${index + 1}`);
+      append(order, up, down, remove); body.append(order);
+    }
+    const basics = node('div', 'editor-field-grid');
+    append(basics,
+      editorField('Criterion identifier', textEditorControl(`${prefix}-id`, criterion.id, value => { criterion.id = value; summary.lastElementChild.textContent = value || 'Set an identifier'; }, { maxLength: 128, placeholder: 'DOC-01' })),
+      editorField('Dimension', textEditorControl(`${prefix}-dimension`, criterion.dimension, value => { criterion.dimension = value; }, { maxLength: 160, placeholder: 'Documentation' })),
+      editorField('Criterion title', textEditorControl(`${prefix}-title`, criterion.title, value => { criterion.title = value; summaryTitle.textContent = value || 'Untitled criterion'; }, { maxLength: 160, placeholder: 'What does this criterion establish?' })),
+      editorField('Criterion description', textEditorControl(`${prefix}-description`, criterion.description, value => { criterion.description = value; }, { multiline: true, required: false, maxLength: 2000, placeholder: 'Describe the claim and its scope.' })));
+    body.append(basics);
+    body.append(editorField('Evidence requirements', textEditorControl(`${prefix}-requirements`, criterion.evidenceRequirements.join('\n'), value => { criterion.evidenceRequirements = splitLines(value); }, { multiline: true, required: false, maxLength: 20000, placeholder: 'One requirement per line' }), 'Use up to 20 custom descriptions. The generated reviewer-decision requirement does not count toward this limit. If left blank, the engine uses the configured evidence paths.'));
+    const ruleKinds = [['files', 'File presence & size'], ['json-field', 'JSON field'], ['vulnerabilities', 'Known vulnerability count'], ['expert', 'Human judgment']];
+    if (state.builtinTemplate?.criteria.some(item => item.evaluation?.kind === 'builtin')) ruleKinds.unshift(['builtin', 'Built-in criterion rule']);
+    const ruleSelect = selectEditorControl(`${prefix}-rule-kind`, criterion.evaluation.kind, ruleKinds, kind => changeEvaluationKind(index, kind));
+    body.append(editorField('Evaluation rule', ruleSelect));
+    if (criterion.evaluation.kind === 'builtin') {
+      const choices = (state.builtinTemplate?.criteria || []).filter(item => item.evaluation?.kind === 'builtin').map(item => [item.id, `${item.id} · ${item.title}`]);
+      const builtinId = state.builtinTemplate?.criteria.find(item => item.evaluation?.criterionId === criterion.evaluation.criterionId)?.id || criterion.evaluation.criterionId;
+      body.append(editorField('Built-in criterion', selectEditorControl(`${prefix}-builtin`, builtinId, choices, value => applyBuiltinCriterion(index, value)), 'Selecting a built-in criterion copies its default definition and fixed collector inputs.'));
+    }
+    const collector = selectEditorControl(`${prefix}-collector`, criterion.collector.toolId, [['project-files', 'Project files · preserve selected bytes'], ['osv-scanner', 'OSV-Scanner · supported lockfiles']], value => {
+      criterion.collector.toolId = value;
+      if (value === 'osv-scanner' && criterion.evaluation.kind !== 'vulnerabilities') changeEvaluationKind(index, 'vulnerabilities');
+      else if (value === 'project-files' && criterion.evaluation.kind === 'vulnerabilities') changeEvaluationKind(index, 'files');
+    });
+    body.append(editorField('Evidence collector', collector));
+    const paths = textEditorControl(`${prefix}-paths`, criterion.collector.paths.join('\n'), value => { criterion.collector.paths = splitLines(value); }, { multiline: true, maxLength: 20000, placeholder: criterion.collector.toolId === 'osv-scanner' ? 'package-lock.json\ngo.sum' : 'README.md\ndocs/governance.md' });
+    body.append(editorField('Project-relative evidence paths', paths, criterion.evaluation.kind === 'json-field' ? 'Use exactly one relative path to a JSON file. Inputs stay within the selected project.' : criterion.collector.toolId === 'osv-scanner' ? 'One supported root lockfile per line. The engine validates which lockfile formats are supported.' : 'One relative file path per line. The engine captures these selected inputs, rather than the whole repository.'));
+    if (criterion.evaluation.kind === 'builtin') {
+      collector.disabled = true; collector.dataset.fixed = 'true'; paths.readOnly = true; paths.dataset.fixed = 'true';
+      paths.required = false;
+    }
+    if (criterion.evaluation.kind === 'files') {
+      const config = node('div', 'editor-field-grid');
+      append(config,
+        editorField('Required file coverage', selectEditorControl(`${prefix}-match`, criterion.evaluation.match, [['all', 'All configured files'], ['any', 'At least one configured file']], value => { criterion.evaluation.match = value; })),
+        editorField('Minimum size in bytes', numericEditorControl(`${prefix}-minimum-bytes`, criterion.evaluation.minimumBytes, value => { criterion.evaluation.minimumBytes = value; }, 8 * 1024 * 1024), 'This establishes file presence and size, not the accuracy of its contents.'));
+      body.append(config);
+    } else if (criterion.evaluation.kind === 'json-field') {
+      body.append(editorField('JSON property path', textEditorControl(`${prefix}-json-field`, criterion.evaluation.field.join('\n'), value => { criterion.evaluation.field = splitLines(value); }, { multiline: true, rows: 2, placeholder: 'metadata\nlicense' }), 'One property name per line, from outermost to innermost. Dots inside a name remain literal.'));
+      body.append(editorField('JSON comparison', selectEditorControl(`${prefix}-operator`, criterion.evaluation.operator, [['exists', 'Property exists'], ['equals', 'Equals a JSON scalar']], value => {
+        criterion.evaluation.operator = value;
+        if (value === 'exists') { delete criterion.evaluation.expected; delete criterion._expectedText; }
+        else if (!('expected' in criterion.evaluation)) criterion.evaluation.expected = null;
+        renderEditorCriteria(); updateEditorActions();
+      })));
+      if (criterion.evaluation.operator === 'equals') {
+        body.append(editorField('Expected JSON scalar', textEditorControl(`${prefix}-expected`, criterion._expectedText ?? JSON.stringify(criterion.evaluation.expected ?? null), value => { criterion._expectedText = value; }, { placeholder: '"MIT"' }), 'Use JSON syntax: a quoted string, number, true, false, or null. Arrays and objects are not supported.'));
+      }
+    } else if (criterion.evaluation.kind === 'vulnerabilities') {
+      body.append(editorField('Maximum known findings allowed', numericEditorControl(`${prefix}-max-findings`, criterion.evaluation.maxFindings, value => { criterion.evaluation.maxFindings = value; }, 100000), 'This rule applies to scanner findings within the recorded lockfile coverage; it does not establish overall security.'));
+    } else if (isIntrinsicExpertCriterion(criterion)) {
+      body.append(node('p', 'expert-rule-note', 'Collected files inform an attributed reviewer decision. This criterion has no automatic passing rule.'));
+    }
+    const reviewLabel = node('label', 'review-requirement');
+    const review = node('input'); review.type = 'checkbox'; review.checked = criterion.requiresReview || criterion.evaluation.kind === 'expert';
+    review.id = `${prefix}-requires-review`;
+    const fixedExpertRule = criterion.evaluation.kind === 'builtin' && state.builtinTemplate?.criteria.find(item => item.evaluation?.criterionId === criterion.evaluation.criterionId)?.requiresReview;
+    if (criterion.evaluation.kind === 'expert' || fixedExpertRule) { criterion.requiresReview = true; review.checked = true; review.dataset.fixed = 'true'; review.disabled = true; }
+    review.addEventListener('change', () => { criterion.requiresReview = review.checked; markEditorDirty(); });
+    append(reviewLabel, review, node('span', '', 'Require an attributed human review before finalising this criterion'));
+    body.append(reviewLabel);
+    append(card, body); list.append(card);
+  });
+  updateEditorActions();
+}
+
+function prepareTemplateDraft() {
+  const editor = state.editor;
+  const draft = { ...editor.draft, criteria: editor.draft.criteria.map(criterion => {
+    const input = templateCriterionInput(criterion);
+    const customRequirements = input.evidenceRequirements.filter(requirement => !(input.requiresReview && requirement === 'Attributed reviewer decision and rationale'));
+    if (customRequirements.length > 20) throw new Error(`${criterion.id}: use at most 20 custom evidence requirements. The generated attributed-review requirement is counted separately.`);
+    if (input.evaluation.kind === 'json-field' && input.evaluation.operator === 'equals') {
+      let value;
+      try { value = JSON.parse(criterion._expectedText ?? JSON.stringify(input.evaluation.expected)); } catch { throw new Error(`${criterion.id}: the expected value must be a valid JSON scalar.`); }
+      if ((value !== null && !['string', 'number', 'boolean'].includes(typeof value)) || (typeof value === 'number' && !Number.isFinite(value))) throw new Error(`${criterion.id}: the expected value must be a finite number, string, boolean, or null.`);
+      input.evaluation.expected = value;
+    }
+    return input;
+  }) };
+  if (editor.source && !editor.readonly) { draft.id = editor.source.id; draft.expectedVersion = editor.expectedVersion; }
+  return draft;
+}
+
+async function publishTemplate() {
+  if (!state.editor || state.editor.readonly || state.publishing) return;
+  const form = $('#template-form');
+  form.querySelectorAll('input, select, textarea').forEach(control => {
+    if (!control.disabled && !control.checkValidity()) {
+      const detail = control.closest('details'); if (detail) detail.open = true;
+    }
+  });
+  if (!form.reportValidity()) return;
+  let draft;
+  try { draft = prepareTemplateDraft(); } catch (error) { editorMessage(error.message, true); return; }
+  state.publishing = true; updateEditorActions(); clearNotice();
+  try {
+    const published = await api('/api/templates', { method: 'POST', body: JSON.stringify(draft) });
+    const versions = [...(state.editor.versions || []).filter(item => item.version !== published.version), { version: published.version, createdAt: published.createdAt, policyDigest: published.policyDigest }];
+    state.editor = { source: published, draft: templateDraftFrom(published), versions, expectedVersion: published.version, readonly: published.builtIn, dirty: false, origin: '' };
+    const summary = { id: published.id, name: published.name, description: published.description, latestVersion: published.version, versionCount: versions.length, updatedAt: published.createdAt, policyDigest: published.policyDigest, builtIn: published.builtIn };
+    state.templates = [summary, ...state.templates.filter(item => item.id !== published.id)];
+    renderTemplateLibrary(); renderAssessmentTemplateSelector();
+    renderTemplateEditor();
+    editorMessage(`${published.name}, version ${published.version}, is published. This fixed version can now be used in the browser and CLI.`);
+    const refreshes = await Promise.allSettled([
+      api(`/api/templates/${encodeURIComponent(published.id)}/versions`), api('/api/templates'),
+    ]);
+    if (refreshes[0].status === 'fulfilled') state.editor.versions = refreshes[0].value;
+    if (refreshes[1].status === 'fulfilled') state.templates = refreshes[1].value;
+    renderTemplateLibrary(); renderAssessmentTemplateSelector();
+    if (refreshes.some(result => result.status === 'rejected')) editorMessage(`${published.name}, version ${published.version}, is published. The template list could not be fully refreshed; use Refresh to try again.`);
+    if (state.assessmentTemplate?.id === published.id) {
+      renderAssessmentVersionOptions(state.editor.versions, state.assessmentTemplate.version);
+      showNotice(`Version ${published.version} was published. The assessment selection stays pinned to version ${state.assessmentTemplate.version} until you choose another version.`);
+    }
+  } catch (error) {
+    if (error.status === 409 && state.editor.source) {
+      editorMessage(`A newer version was published while you were editing. Your draft is retained. ${error.message}`, true);
+      const recover = button('Load latest published version', 'text-button', () => openTemplateEditor(state.editor.source.id));
+      const note = node('p', 'field-help', 'Loading the latest version replaces the draft shown here. Copy the draft into a new template to keep your changes separately.');
+      append($('#template-publish-message'), note, recover);
+    } else editorMessage(`Template was not published. ${error.message}`, true);
+  } finally { state.publishing = false; updateEditorActions(); }
+}
+
+function copyEditorTemplate() {
+  if (!state.editor || state.publishing) return;
+  const editor = state.editor;
+  const copied = { ...editor.draft, name: `${editor.draft.name} copy`, criteria: editor.draft.criteria.map(criterion => ({ ...templateCriterionInput(criterion), ...(criterion._expectedText !== undefined ? { _expectedText: criterion._expectedText } : {}) })) };
+  const origin = editor.source ? `Copied from ${editor.source.name}, version ${editor.source.version}.` : editor.origin;
+  createTemplateEditor(copied, origin);
+}
+
+async function downloadTemplateVersion() {
+  const source = state.editor?.source;
+  if (!source) return;
+  const trigger = $('#export-template'); const original = trigger.textContent;
+  trigger.disabled = true; trigger.textContent = 'Preparing…';
+  try {
+    const response = await fetch(`/api/templates/${encodeURIComponent(source.id)}/export?version=${source.version}`, { credentials: 'same-origin' });
+    if (!response.ok) {
+      let message = `Template export failed (${response.status}).`;
+      try { const body = await response.json(); if (body.error) message = body.error; } catch { /* Use the HTTP error. */ }
+      throw new Error(message);
+    }
+    const url = URL.createObjectURL(await response.blob());
+    const link = node('a'); link.href = url; link.download = `template-${source.id}-v${source.version}.json`;
+    document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (error) { editorMessage(error.message, true); }
+  finally { trigger.textContent = original; trigger.disabled = state.publishing; }
+}
+
+async function importTemplateFile(file) {
+  if (!file) return;
+  try {
+    const imported = JSON.parse(await file.text());
+    if (!imported || typeof imported !== 'object' || Array.isArray(imported) || typeof imported.name !== 'string' || typeof imported.description !== 'string' || !Array.isArray(imported.criteria)) throw new Error('Choose a template JSON export containing a name, description, and criteria.');
+    if (!['offline', 'online'].includes(imported.networkMode)) throw new Error('The template must declare an offline or online network policy.');
+    for (const criterion of imported.criteria) {
+      if (!criterion || typeof criterion !== 'object' || !['id', 'title', 'description', 'dimension'].every(key => typeof criterion[key] === 'string') || !Array.isArray(criterion.evidenceRequirements) || !criterion.evidenceRequirements.every(item => typeof item === 'string') || !criterion.collector || !Array.isArray(criterion.collector.paths) || !criterion.collector.paths.every(item => typeof item === 'string') || !['project-files', 'osv-scanner'].includes(criterion.collector.toolId) || !criterion.evaluation || !['builtin', 'files', 'json-field', 'vulnerabilities', 'expert'].includes(criterion.evaluation.kind)) throw new Error('A criterion has an unsupported or incomplete definition.');
+      if (criterion.evaluation.kind === 'json-field' && !Array.isArray(criterion.evaluation.field)) throw new Error(`${criterion.id}: JSON property paths must be an array of property names.`);
+    }
+    const draft = templateDraftFrom(imported);
+    draft.name = `${draft.name} (imported)`;
+    createTemplateEditor(draft, `Imported from ${file.name}. Publishing creates a new local template, with its own version history.`);
+    editorMessage('Imported as an unpublished copy. Review its evidence paths, rules, and network policy before publishing.');
+  } catch (error) { showNotice(`Template could not be imported: ${error.message}`, true); }
+  finally { $('#template-import-file').value = ''; }
+}
+
 document.querySelectorAll('[data-view]').forEach(element => element.addEventListener('click', async () => {
   const view = element.dataset.view;
   setView(view, true);
-  try { if (view === 'history') await refreshHistory(); else if (view === 'tools') await refreshTools(); }
+  try { if (view === 'history') await refreshHistory(); else if (view === 'tools') await refreshTools(); else if (view === 'templates') await refreshTemplates(); }
   catch (error) { showNotice(error.message, true); }
 }));
 $('#project-form').addEventListener('submit', event => { event.preventDefault(); inspectProject(); });
 $('#project-path').addEventListener('input', () => { state.project = null; renderProject(null); updateSelection(); });
 document.querySelectorAll('input[name="network-mode"]').forEach(input => input.addEventListener('change', renderReadiness));
+$('#assessment-template').addEventListener('change', event => selectAssessmentTemplate(event.currentTarget.value));
+$('#assessment-template-version').addEventListener('change', event => { if (state.assessmentTemplate) selectAssessmentTemplate(state.assessmentTemplate.id, Number(event.currentTarget.value)); });
+$('#new-template').addEventListener('click', startNewTemplate);
+$('#builder-start').addEventListener('click', startNewTemplate);
+$('#refresh-templates').addEventListener('click', async event => {
+  const trigger = event.currentTarget; trigger.disabled = true;
+  try { await refreshTemplates(); } catch (error) { showNotice(error.message, true); } finally { trigger.disabled = false; }
+});
+$('#template-name').addEventListener('input', event => { if (state.editor) { state.editor.draft.name = event.currentTarget.value; markEditorDirty(); } });
+$('#template-description').addEventListener('input', event => { if (state.editor) { state.editor.draft.description = event.currentTarget.value; markEditorDirty(); } });
+$('#template-network').addEventListener('change', event => { if (state.editor) { state.editor.draft.networkMode = event.currentTarget.value; markEditorDirty(); } });
+$('#add-template-criterion').addEventListener('click', () => {
+  if (!state.editor || state.editor.readonly || state.publishing) return;
+  state.editor.draft.criteria.push(newTemplateCriterion(state.editor.draft.criteria));
+  markEditorDirty(); renderEditorCriteria();
+  $('#template-criteria-editor').lastElementChild?.querySelector('input')?.focus();
+});
+$('#template-form').addEventListener('submit', event => { event.preventDefault(); publishTemplate(); });
+$('#editor-template-version').addEventListener('change', event => { if (state.editor?.source) openTemplateEditor(state.editor.source.id, Number(event.currentTarget.value)); });
+$('#copy-template').addEventListener('click', copyEditorTemplate);
+$('#export-template').addEventListener('click', downloadTemplateVersion);
+$('#use-editor-template').addEventListener('click', async () => {
+  const source = state.editor?.source;
+  if (source && await selectAssessmentTemplate(source.id, source.version)) setView('assessment', true);
+});
+$('#import-template').addEventListener('click', () => $('#template-import-file').click());
+$('#template-import-file').addEventListener('change', event => importTemplateFile(event.currentTarget.files[0]));
 $('#restore-defaults').addEventListener('click', () => { state.selected = new Set(state.catalog.filter(item => item.defaultEnabled).map(item => item.id)); renderCriteria(); });
 $('#run-button').addEventListener('click', startRun);
 $('#open-live-run').addEventListener('click', () => { if (state.run) { renderRun(); setView('run', true); } });
@@ -617,14 +1175,16 @@ $('#evidence-dialog').addEventListener('close', () => { state.evidenceRequest +=
 (async function bootstrap() {
   try {
     const data = await api('/api/bootstrap');
-    state.catalog = data.catalog || []; state.tools = data.tools || []; state.runs = data.runs || [];
+    state.catalog = data.catalog || []; state.tools = data.tools || []; state.runs = data.runs || []; state.templates = data.templates || [];
     state.sessionToken = data.sessionToken || '';
     state.selected = new Set(state.catalog.filter(item => item.defaultEnabled).map(item => item.id));
     $('#project-path').value = data.projectPath || '';
     $('#storage-path').textContent = data.dataDir || 'Location not supplied by the engine.';
     state.ready = true;
     $('#engine-status').replaceChildren(node('span', 'status-dot'), document.createTextNode('Local engine connected'));
-    renderCriteria(); renderHistory(); renderTools();
+    renderCriteria(); renderHistory(); renderTools(); renderTemplateLibrary(); renderAssessmentTemplateSelector();
+    const builtin = state.templates.find(template => template.id === 'oss-readiness');
+    if (builtin) await selectAssessmentTemplate(builtin.id, 1);
   } catch (error) {
     $('#engine-status').classList.add('failed');
     $('#engine-status').replaceChildren(node('span', 'status-dot'), document.createTextNode('Engine unavailable'));

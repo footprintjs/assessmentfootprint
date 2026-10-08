@@ -1,8 +1,8 @@
 # AssessmentFootprint
 
-A local software assessment workbench that keeps findings, their evidence, and human judgments together. Choose a project folder, run scoped checks, inspect the original evidence, record a governance review, and export the result.
+A local software assessment workbench that keeps reusable policies, findings, their evidence, and human judgments together. Create a saved assessment template, choose a project folder, run its scoped checks, inspect the original evidence, record required human reviews, and export the result.
 
-The browser and CLI use the same assessment engine. There is no hosted service, account, GitHub token, or paid model dependency. Assessment runs default to offline mode. This first version assesses selected documents and lockfiles of a root Node.js package; it does not assess an entire software system.
+The browser and CLI use the same assessment engine and saved templates. There is no hosted service, account, GitHub token, or paid model dependency. The built-in template assesses selected documents and lockfiles of a root Node.js package. Custom templates can configure bounded file/JSON checks, supported lockfile scans, and expert judgments; they do not turn a selected folder into a complete software-system assessment. The default template is offline; a saved template controls its own offline/online profile.
 
 Every run is labelled **self-assessment**. Reviewer names are declared locally, not independently authenticated. Results are not JRC certification, institutional endorsement, or proof of software safety or legal compliance.
 
@@ -30,22 +30,35 @@ This repository is currently `private: true` and unpublished. There is no publis
 ## CLI
 
 ```sh
-node src/cli.ts tools
-node src/cli.ts run /absolute/path/to/project --json
-node src/cli.ts run /absolute/path/to/project --criteria project-metadata,license-evidence,security-policy
-node src/cli.ts report RUN_ID --format html --output ./assessment-report.html
-node src/cli.ts report RUN_ID --format json --output ./assessment-report.json
-node src/cli.ts --help
+node bin/assessment.mjs tools
+node bin/assessment.mjs run /absolute/path/to/project --json
+node bin/assessment.mjs run /absolute/path/to/project --criteria project-metadata,license-evidence,security-policy
+node bin/assessment.mjs report RUN_ID --format html --output ./assessment-report.html
+node bin/assessment.mjs report RUN_ID --format json --output ./assessment-report.json
+node bin/assessment.mjs --help
 ```
 
-After optional `npm link`, replace `node src/cli.ts` with `assessment`.
+Saved templates have their own CLI commands:
+
+```sh
+node bin/assessment.mjs templates list --json
+node bin/assessment.mjs templates show TEMPLATE_ID --version 1 --json
+node bin/assessment.mjs templates import ./policy.json --json
+node bin/assessment.mjs templates import ./policy-update.json --expected-version 1 --json
+node bin/assessment.mjs templates export TEMPLATE_ID --version 1 --output ./policy-export.json
+node bin/assessment.mjs run /absolute/path/to/project --template TEMPLATE_ID --template-version 1 --json
+```
+
+Replace `TEMPLATE_ID` with an identifier shown by `templates list` or returned on import. These commands also accept `--data-dir PATH`. Without a pinned template version, a run uses the latest saved version. A saved-template run cannot combine `--criteria` with `--template`; a network option must agree with the template's saved profile. Publish a new template version to change its configuration.
+
+After optional `npm link`, replace `node bin/assessment.mjs` with `assessment`.
 
 The project path defaults to the current working directory. Stored data defaults to `.assessmentfootprint` **in the current working directory**, not necessarily in the assessed project. `studio`, `run`, and `report` accept `--data-dir PATH`; use the same directory when reading an earlier run.
 
 ```sh
-node src/cli.ts run /absolute/path/to/project --data-dir ./assessment-data
+node bin/assessment.mjs run /absolute/path/to/project --data-dir ./assessment-data
 node bin/assessment.mjs studio /absolute/path/to/project --data-dir ./assessment-data
-node src/cli.ts report RUN_ID --format json --data-dir ./assessment-data
+node bin/assessment.mjs report RUN_ID --format json --data-dir ./assessment-data
 ```
 
 `run` exit codes describe the findings, with the following precedence:
@@ -59,7 +72,55 @@ node src/cli.ts report RUN_ID --format json --data-dir ./assessment-data
 
 A completed run means that the selected checks finished. It can still contain negative or incomplete findings. Selecting all six criteria normally leaves governance review pending until a person records a judgment in Studio. An empty-scope or skipped criterion is not a security assurance.
 
-## The six criteria
+## Saved templates
+
+Studio's Templates view creates new templates, copies the built-in template, edits saved policies, publishes new versions, and imports/exports JSON manifests. A browser import opens an unpublished copy for inspection; publishing gives it a new local identity and history. Configure the template's name, description, network profile, criterion definitions, evidence requirements, collector paths, evaluation rules, and review requirements. The same published version can then assess different local projects through Studio or the CLI.
+
+A template contains 1–32 criteria. A criterion chooses one registered collector: `project-files` or `osv-scanner`; there is no custom executable or shell-command field. Each collector declares 1–32 unique, portable paths relative to the assessed project, with at most 128 unique configured paths across the template. Nested paths are supported. Absolute paths, Windows/backslash paths, parent traversal, root `.git` inputs regardless of capitalization, and paths escaping the project through symlinks are rejected. Each captured file is limited to 8 MiB; the total captured snapshot is limited to 32 MiB. Root `package.json` is also captured when present to identify the subject, even when it is not a criterion's input; its bytes count towards the total.
+
+Each criterion supports up to 20 authored evidence-requirement descriptions. Requiring human review adds a retained attributed-review requirement when needed. Blank requirements default to the collector paths, or one explicit reference to those paths for larger lists, so an application-generated manifest remains valid when read, edited, or imported again.
+
+Supported evaluation rules are:
+
+| Rule | Meaning |
+| --- | --- |
+| `builtin` | Reuse a built-in criterion at its declared revision and fixed evidence paths. Its scope stays the same as the built-in rule. |
+| `files` | Require all or any configured files to exist and meet a minimum byte count. This does not validate their meaning or operational effectiveness. |
+| `json-field` | In exactly one configured JSON file, require an explicit own field to exist or equal a string, finite number, boolean, or null. Nested field components are arrays, and traversal does not read inherited prototype properties. |
+| `vulnerabilities` | Require a usable OSV v2 scan of configured supported lockfiles to report no more than a declared finding count. Missing tools/data/coverage never satisfy the threshold. This counts findings, not severity, exploitability, or unique CVEs. |
+| `expert` | Collect the configured documents and require an attributed human decision against the stated evidence requirements. |
+
+Any automatic rule can additionally require human review. The run retains its `automaticResult` and remains pending until review; a human disagreement updates the current judgment without rewriting that automatic result or the raw evidence. Expert rules always require review.
+
+For example, save the following JSON as `policy.json` and import it with the command above:
+
+```json
+{
+  "name": "Release documentation",
+  "description": "Check release guidance and review whether it is usable.",
+  "networkMode": "offline",
+  "criteria": [
+    {
+      "id": "release-guidance",
+      "title": "Release guidance",
+      "description": "The release procedure should be documented and reviewed.",
+      "dimension": "Release process",
+      "evidenceRequirements": ["A documented release procedure a maintainer can follow"],
+      "collector": { "toolId": "project-files", "paths": ["docs/RELEASE.md"] },
+      "evaluation": { "kind": "files", "match": "all", "minimumBytes": 50 },
+      "requiresReview": true
+    }
+  ]
+}
+```
+
+Importing this draft without an ID generates a local template identifier and publishes version 1. Publishing an edit stores a new version; earlier versions are retained. Edits supply the current `expectedVersion` so a stale editor cannot overwrite newer work. The built-in template is read-only and must be copied before modification. Criterion rule prose is generated from validated configuration, rather than trusted from imported descriptions.
+
+Exported manifests include the template ID, version, creation time, policy digest, and normalized criteria. CLI/API import revalidates their configuration and publishes a local version directly. A custom ID absent from the local store starts at local version 1 and must not claim an existing destination version. An existing ID requires an explicit `expectedVersion` for the **destination store's current version** and publishes the next local version; in the CLI, supply `--expected-version N`. The exported source version is never a destination concurrency guard. Importing the built-in ID makes a custom copy. Studio instead opens imported JSON as a new draft for review before publication. Incoming creation time, version history, origin labels, and digest are not trusted as external provenance; identical normalized content can share a policy digest without proving authorship.
+
+Every assessment freezes the exact selected template manifest, policy digest, criterion definitions, requested input paths, captured file hashes, results, evidence, and reviews. Editing a template later does not change an earlier run. Template version numbers and assessment review revision numbers are separate.
+
+## The built-in six criteria
 
 | Identifier | Rule and scope |
 | --- | --- |
@@ -70,11 +131,11 @@ A completed run means that the selected checks finished. It can still contain ne
 | `dependency-vulnerabilities` | OSV-Scanner v2 checks the frozen root lockfiles. A usable scan identifying packages and reporting vulnerabilities is not satisfied; a usable scan identifying packages and reporting none is satisfied only within that scan's scope. Missing scanners, unsupported scanner versions, missing databases, empty package coverage, or unusable output remain insufficient evidence. Without a root manifest, this is not applicable. |
 | `governance-review` | A person inspects available governance, contribution, and README documents, identifies decision authority and contributor participation, and records a decision with a rationale. Document presence alone does not satisfy this criterion. |
 
-The framework is `oss-readiness`, version `0.1.0`. Each run stores its policy digest, copies of the selected criterion definitions, and their results, so an older finding keeps the rule it was assessed against. It has no aggregate score that turns missing evidence into a passing mark.
+The built-in template is `oss-readiness`, published template version `1`, using built-in rule revision `0.1.0`. Each run stores its policy digest, copies of the selected criterion definitions, and their results, so an older finding keeps the rule it was assessed against. It has no aggregate score that turns missing evidence into a passing mark. One-off built-in criterion selection remains available and is captured as its own run policy.
 
 ## Optional OSV-Scanner
 
-Only dependency-vulnerability assessment requires an external scanner. The other checks and the browser work without it. Use the [official OSV installation instructions](https://google.github.io/osv-scanner/installation/) and ensure the installed native executable is on PATH:
+Only OSV vulnerability rules require an external scanner. File/JSON checks, expert review, template configuration, and the browser work without it. Use the [official OSV installation instructions](https://google.github.io/osv-scanner/installation/) and ensure the installed native executable is on PATH:
 
 ```sh
 # macOS or Linux with Homebrew
@@ -86,7 +147,7 @@ brew install osv-scanner
 winget install Google.OSVScanner
 ```
 
-Prebuilt Linux, macOS, and Windows binaries are also available from [OSV's releases](https://github.com/google/osv-scanner/releases). Confirm the scanner reports a v2 version with `osv-scanner --version` and inspect workbench availability with `node src/cli.ts tools`.
+Prebuilt Linux, macOS, and Windows binaries are also available from [OSV's releases](https://github.com/google/osv-scanner/releases). Confirm the scanner reports a v2 version with `osv-scanner --version` and inspect workbench availability with `node bin/assessment.mjs tools`.
 
 Prepare advisory data separately while connected to the internet. OSV documents automatic downloads through `--download-offline-databases` combined with offline mode, and manual ecosystem database downloads. For an npm root lockfile, a preparation scan can be:
 
@@ -96,17 +157,17 @@ osv-scanner scan source --offline --download-offline-databases --no-call-analysi
 
 Use the appropriate actual lockfile path. A vulnerability finding can produce a non-zero scan exit even after the database download. The workbench inherits `OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY` when set. For **OSV-Scanner 2.6.0**, set that variable to the cache base directory and place an npm database at `<cache-base>/osv-scalibr/npm/all.zip`. The scanner uses the Scalibr cache layout; older offline documentation shows an `osv-scanner` suffix. The exact current layout is confirmed by [OSV 2.6.0's environment binding](https://github.com/google/osv-scanner/blob/v2.6.0/cmd/osv-scanner/internal/helper/flags.go) and [its pinned Scalibr database-path implementation](https://github.com/google/osv-scalibr/blob/3090dbb7aaa2/enricher/vulnmatch/osvlocal/matcher.go). Moving an existing downloaded `npm/all.zip` into the correct layout avoids downloading it again. See [OSV's offline-mode documentation](https://github.com/google/osv-scanner/blob/main/docs/offline-mode.md) for ecosystem downloads. Offline preparation is not performed automatically by AssessmentFootprint.
 
-During assessment, the adapter passes only explicit frozen root lockfiles to `scan source`, requests JSON and all package records, and disables Go call analysis. Offline mode adds OSV's `--offline` flag. It does not install the project, invoke build or test scripts, remediate dependencies, or scan source reachability. [OSV documents](https://google.github.io/osv-scanner/usage/scan-source) the separate call-analysis behavior and its additional execution requirements.
+During assessment, the adapter passes only explicit frozen configured lockfiles to `scan source`, requests JSON and all package records, and disables Go call analysis. The built-in rule uses root lockfiles; custom vulnerability rules may select nested lockfiles with supported filenames. Offline mode adds OSV's `--offline` flag. It does not install the project, invoke build or test scripts, remediate dependencies, recursively discover packages, or scan source reachability. [OSV documents](https://google.github.io/osv-scanner/usage/scan-source) the separate call-analysis behavior and its additional execution requirements.
 
-To permit OSV's online advisory lookup for a run, supply `--online`, or select online mode in Studio. That can disclose dependency identifiers to OSV services; it still runs on the laptop. Offline results reflect locally available advisory data. Raw scan output is preserved, but this version does not bundle or timestamp the complete advisory database for reproducible historical matching.
+To permit OSV's online advisory lookup for a one-off run, supply `--online`, or select online mode in Studio. For a saved template, publish its network profile as online. That can disclose dependency identifiers to OSV services; it still runs on the laptop. Offline results reflect locally available advisory data. Raw scan output is preserved, but this version does not bundle or timestamp the complete advisory database for reproducible historical matching.
 
 ## Evidence and review
 
-The data directory contains `assessment.sqlite` and `runs/<run-id>/`. Selected input files are copied into a run's `inputs/` folder before evaluation. Evidence records identify their source, collection time, tool and version, byte size, SHA-256 digest, and local raw artifact reference. The original scanner JSON, diagnostics, and FootprintJS workflow are retained as evidence.
+The data directory contains `assessment.sqlite` and `runs/<run-id>/`. SQLite holds published template versions as well as run records. Selected input files are copied into a run's `inputs/` folder before evaluation. Evidence records identify their source, collection time, tool and version, byte size, SHA-256 digest, and local raw artifact reference. The original scanner JSON, diagnostics, and FootprintJS workflow are retained as evidence.
 
 FootprintJS `9.44.1` actually executes a linear chart: an input-digest stage followed by the selected criterion stages. Its state writes, commit log, write provenance, and narrative are saved in a workflow evidence artifact. This is recorded execution, not an invented explanation generated after the result.
 
-Studio shows run history, criterion findings, original evidence, and an attributed governance-review form. Reviews append to the review history, increment the run revision, and update the current expert finding within a database transaction. The automation completion timestamp is separate from final completion: a run awaiting review keeps its final completion timestamp unset. HTML and JSON reports include findings, retained rules, evidence metadata, limitations, and review history; raw artifact files remain in the local data directory and are not embedded as a portable evidence bundle. Evidence reads verify stored bytes against their recorded digest; exports also verify frozen inputs. These hashes are integrity checks, not signatures or independent authentication of the whole local record.
+Studio shows run history, criterion findings, original evidence, and attributed review forms for criteria requiring review. Reviews append to the review history, increment the run revision, and update the current finding within a database transaction; an automatic result remains separately available. The automation completion timestamp is separate from final completion: a run awaiting review keeps its final completion timestamp unset. HTML and JSON reports include findings, retained rules and evidence requirements, the exact captured template, automatic results, evidence metadata, limitations, and review history; raw artifact files remain in the local data directory and are not embedded as a portable evidence bundle. Evidence reads verify stored bytes against their recorded digest; exports also verify frozen inputs and consistency of retained policy/criterion/network/framework metadata. These hashes are integrity checks, not signatures or independent authentication of the whole local record.
 
 Git HEAD is recorded only as contextual metadata where available. The workbench deliberately does not run `git status`, which can invoke repository-defined filters; `gitDirty` remains unknown and the frozen inputs can differ from that commit. If a run's owning process exits before finalisation, reopening its data directory records the abandoned run as interrupted while retaining completed evidence. Start a new assessment to finish the checks; recovery does not resume an arbitrary subprocess.
 
@@ -118,7 +179,7 @@ npm run check
 
 This runs TypeScript checking and the test suite. Avoid claiming a verification count without running the current suite.
 
-The first version has a fixed six-criterion framework. It does not provide a general framework editor, custom script runners, npm-audit or OpenSSF Scorecard adapters, GitHub/remote governance checks, repository cloning, multi-package traversal, broader language assessment, local-model judgments, authenticated independent reviewers, or hosted collaboration. Input capture excludes application source code, installed dependencies, and hosting settings; each selected input is limited to 8 MiB.
+Template configuration is limited to the declared collectors and rule forms above. Arbitrary programs, arbitrary DSL expressions, custom script runners, severity-based vulnerability policies, npm-audit/Scorecard adapters, remote governance checks, repository cloning, automatic multi-package discovery, general language/toolchain evaluation, local-model judgments, authenticated independent reviewers, and hosted collaboration are not implemented. A custom template can select nested files or supported lockfiles, but only those explicit inputs are assessed. No whole-source or installed-dependency inventory is inferred.
 
 See [architecture](docs/architecture.md) and [reuse analysis](docs/reuse-analysis.md) for implementation boundaries.
 

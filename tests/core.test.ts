@@ -201,10 +201,13 @@ test('report integrity includes the frozen scanner inputs and saved criterion de
   t.after(() => engine.close());
   const run = await engine.runAssessment({ projectPath: f.project, criterionIds: ['project-metadata'] });
   const db = new DatabaseSync(join(f.dataDir, 'assessment.sqlite'));
-  run.criteria[0].title = 'Saved policy title';
+  const original = JSON.stringify(run);
+  run.criteria[0].title = 'Forged policy title';
   db.prepare('UPDATE runs SET payload=? WHERE id=?').run(JSON.stringify(run), run.id);
+  assert.throws(() => engine.exportReport(run.id, 'html'), /policy integrity check failed/);
+  db.prepare('UPDATE runs SET payload=? WHERE id=?').run(original, run.id);
   db.close();
-  assert.match(engine.exportReport(run.id, 'html'), /Saved policy title/);
+  assert.match(engine.exportReport(run.id, 'html'), /Package identity/);
   writeFileSync(join(f.dataDir, 'runs', run.id, 'inputs', 'package.json'), '{}');
   assert.throws(() => engine.exportReport(run.id, 'json'), /Frozen input integrity check failed/);
 });

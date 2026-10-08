@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AssessmentEngine } from '../src/core.ts';
 import { startServer, type ServerEngine } from '../src/server.ts';
-import type { AssessmentRun, ReviewInput, RunInput } from '../src/types.ts';
+import type { AssessmentRun, ReviewInput, RunInput, TemplateDraft, TemplateVersion } from '../src/types.ts';
 
 function fixture() {
   const inputs: RunInput[] = [];
@@ -25,6 +25,8 @@ function fixture() {
     runAssessment: async input => { inputs.push(input); return run; }, listRuns: () => [], getRun: id => id === run.id ? run : null,
     submitReview: input => { reviews.push(input); return run; }, readEvidence: () => Buffer.from('<script>bad()</script>'),
     exportReport: (_id, format) => format === 'json' ? JSON.stringify(run) : '<!doctype html><html><body>Report</body></html>',
+    listTemplates: () => [], getTemplate: () => null, listTemplateVersions: () => [],
+    saveTemplate: () => { throw new Error('No fixture template has been defined.'); }, importTemplate: () => { throw new Error('No fixture template has been defined.'); },
   };
   return { engine, run, inputs, reviews };
 }
@@ -52,6 +54,7 @@ test('local API exposes bootstrap, runs, evidence and downloadable reports', asy
   assert.equal(bootstrap.status, 200);
   const state = JSON.parse(bootstrap.body);
   assert.equal(state.projectPath, '/example/project');
+  assert.deepEqual(state.templates, []);
   assert.match(state.sessionToken, /^[a-f0-9]{64}$/);
   assert.equal(bootstrap.headers['access-control-allow-origin'], undefined);
   assert.match(bootstrap.headers['content-security-policy'] as string, /script-src 'self'/);
@@ -175,4 +178,104 @@ test('real engine input and active-run conflicts return actionable HTTP errors',
   assert.equal((await http(app.url, { method: 'POST', path: `/api/runs/${activeRun.id}/reviews`, headers, body: reviewBody })).status, 409);
   release!();
   await pending;
+});
+
+function readmeTemplate(): TemplateDraft {
+  return {
+    id: 'api-readme', name: 'README availability', description: 'Check selected documentation bytes.', networkMode: 'offline',
+    criteria: [{ id: 'readme', title: 'README availability', description: 'Collect the README document.', dimension: 'Documentation', evidenceRequirements: ['README.md'], collector: { toolId: 'project-files', paths: ['README.md'] }, evaluation: { kind: 'files', match: 'all', minimumBytes: 5 }, requiresReview: false }],
+  };
+}
+
+test('template API saves immutable versions and assessment runs retain their pinned policy', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'assessment-template-api-'));
+  const projectPath = join(root, 'project');
+  mkdirSync(projectPath);
+  writeFileSync(join(projectPath, 'README.md'), '# Useful documentation\n');
+  const engine = new AssessmentEngine({ dataDir: join(root, 'data'), osvExecutable: join(root, 'missing-scanner') });
+  const app = await startServer({ engine, projectPath, dataDir: engine.dataDir });
+  t.after(async () => { await app.close(); engine.close(); rmSync(root, { recursive: true, force: true }); });
+  const state = JSON.parse((await http(app.url, { path: '/api/bootstrap' })).body);
+  assert.ok(Array.isArray(state.templates));
+  const headers = { 'Content-Type': 'application/json', 'X-Assessment-Session': state.sessionToken };
+  const draft = readmeTemplate();
+  const saved = await http(app.url, { method: 'POST', path: '/api/templates', headers, body: JSON.stringify(draft) });
+  assert.equal(saved.status, 201, saved.body);
+  const first = JSON.parse(saved.body) as TemplateVersion;
+  assert.equal(first.version, 1);
+  const assessed = await http(app.url, { method: 'POST', path: '/api/runs', headers, body: JSON.stringify({ projectPath, templateId: first.id, templateVersion: 1 }) });
+  assert.equal(assessed.status, 201, assessed.body);
+  const run = JSON.parse(assessed.body) as AssessmentRun;
+  assert.equal(run.results[0].status, 'satisfied');
+  assert.equal(run.template?.version, 1);
+  const revised = { ...draft, id: first.id, expectedVersion: 1, name: 'More substantial README', criteria: [{ ...draft.criteria[0], evaluation: { kind: 'files', match: 'all', minimumBytes: 1000 } }] };
+  const updated = await http(app.url, { method: 'POST', path: '/api/templates', headers, body: JSON.stringify(revised) });
+  assert.equal(updated.status, 201, updated.body);
+  const second = JSON.parse(updated.body) as TemplateVersion;
+  assert.equal(second.version, 2);
+  assert.notEqual(second.policyDigest, first.policyDigest);
+  assert.equal((await http(app.url, { method: 'POST', path: '/api/templates', headers, body: JSON.stringify(revised) })).status, 409);
+  const id = encodeURIComponent(first.id);
+  assert.deepEqual(JSON.parse((await http(app.url, { path: `/api/templates/${id}?version=1` })).body), first);
+  assert.equal(JSON.parse((await http(app.url, { path: `/api/templates/${id}` })).body).version, 2);
+  assert.equal(JSON.parse((await http(app.url, { path: `/api/templates/${id}/versions` })).body).length, 2);
+  const summary = JSON.parse((await http(app.url, { path: '/api/templates' })).body).find((template: { id: string }) => template.id === first.id);
+  assert.equal(summary.latestVersion, 2);
+  const retained = JSON.parse((await http(app.url, { path: `/api/runs/${run.id}` })).body) as AssessmentRun;
+  assert.equal(retained.template?.policyDigest, first.policyDigest);
+  assert.equal(retained.template?.criteria[0].evaluation.kind, 'files');
+  assert.deepEqual(retained.template, first);
+  const exported = await http(app.url, { path: `/api/templates/${id}/export?version=1` });
+  assert.equal(exported.status, 200);
+  assert.match(exported.headers['content-disposition'] as string, /attachment; filename="template-.*-v1\.json"/);
+  assert.deepEqual(JSON.parse(exported.body), first);
+  const latestRun = await http(app.url, { method: 'POST', path: '/api/runs', headers, body: JSON.stringify({ projectPath, templateId: first.id }) });
+  assert.equal(latestRun.status, 201, latestRun.body);
+  assert.equal(JSON.parse(latestRun.body).results[0].status, 'not_satisfied');
+});
+
+test('template routes retain session, body, version and supported-collector boundaries', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'assessment-template-boundaries-'));
+  const engine = new AssessmentEngine({ dataDir: join(root, 'data'), osvExecutable: join(root, 'missing-scanner') });
+  const app = await startServer({ engine, projectPath: root, dataDir: engine.dataDir });
+  t.after(async () => { await app.close(); engine.close(); rmSync(root, { recursive: true, force: true }); });
+  const state = JSON.parse((await http(app.url, { path: '/api/bootstrap' })).body);
+  const headers = { 'Content-Type': 'application/json', 'X-Assessment-Session': state.sessionToken };
+  const draft = readmeTemplate();
+  assert.equal((await http(app.url, { method: 'POST', path: '/api/templates', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(draft) })).status, 403);
+  assert.equal((await http(app.url, { method: 'POST', path: '/api/templates', headers: { ...headers, Origin: 'https://unrelated.example' }, body: JSON.stringify(draft) })).status, 403);
+  assert.equal(engine.listTemplates().some(template => template.id === draft.id), false);
+  const template = engine.saveTemplate(draft);
+  for (const version of ['0', '-1', '1.5', 'word', '9007199254740992', '1&version=2']) {
+    assert.equal((await http(app.url, { path: `/api/templates/${template.id}?version=${version}` })).status, 400);
+  }
+  assert.equal((await http(app.url, { path: '/api/templates/%2Fprivate/export' })).status, 400);
+  assert.equal((await http(app.url, { path: '/api/templates/missing/versions' })).status, 404);
+  assert.equal((await http(app.url, { path: `/api/templates/${template.id}?version=99` })).status, 404);
+  for (const input of [ { templateId: template.id, criterionIds: ['project-metadata'] }, { templateVersion: 1 }, { templateId: template.id, templateVersion: 0 }, { templateId: template.id, templateVersion: '1' }, { templateId: template.id, networkMode: 'online' } ]) {
+    assert.equal((await http(app.url, { method: 'POST', path: '/api/runs', headers, body: JSON.stringify({ projectPath: root, ...input }) })).status, 400);
+  }
+  const unsafe = { ...draft, id: 'unsafe-template', criteria: [{ ...draft.criteria[0], collector: { toolId: 'shell', paths: ['README.md'], command: 'run-project-script' } }] };
+  assert.equal((await http(app.url, { method: 'POST', path: '/api/templates', headers, body: JSON.stringify(unsafe) })).status, 400);
+  assert.equal((await http(app.url, { method: 'POST', path: '/api/templates', headers, body: JSON.stringify({ ...draft, description: 'x'.repeat(65 * 1024) }) })).status, 413);
+});
+
+test('large valid template API exports remain within the bounded JSON import size', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'assessment-template-export-'));
+  const engine = new AssessmentEngine({ dataDir: join(root, 'data'), osvExecutable: join(root, 'missing-scanner') });
+  const criteria = Array.from({ length: 32 }, (_, index): TemplateDraft['criteria'][number] => ({
+    id: `criterion-${index}`, title: `Criterion ${index}`, description: 'x'.repeat(1400), dimension: 'Documentation', evidenceRequirements: ['Selected document bytes'],
+    collector: { toolId: 'project-files', paths: ['docs/review.md'] }, evaluation: { kind: 'files', match: 'all', minimumBytes: 1 }, requiresReview: false,
+  }));
+  const saved = engine.saveTemplate({ name: 'Local documentation policy', description: 'A declared policy for selected input files.', networkMode: 'offline', criteria });
+  assert.ok(Buffer.byteLength(JSON.stringify(saved, null, 2)) > 64 * 1024, 'Fixture must exercise pretty-print expansion beyond the import limit.');
+  const app = await startServer({ engine, projectPath: root, dataDir: engine.dataDir });
+  t.after(async () => { await app.close(); engine.close(); rmSync(root, { recursive: true, force: true }); });
+  const exported = await http(app.url, { path: `/api/templates/${encodeURIComponent(saved.id)}/export?version=1` });
+  assert.equal(exported.status, 200);
+  assert.ok(Buffer.byteLength(exported.body) <= 64 * 1024);
+  const imported = engine.importTemplate({ ...JSON.parse(exported.body), expectedVersion: 1 });
+  assert.equal(imported.version, 2);
+  assert.equal(imported.policyDigest, saved.policyDigest);
+  assert.deepEqual(engine.getTemplate(saved.id, 1), saved);
 });

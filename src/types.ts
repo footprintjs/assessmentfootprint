@@ -10,6 +10,52 @@ export interface CriterionDefinition {
   evidenceRequirements: string[];
   defaultEnabled: boolean;
 }
+export type EvaluationRule =
+  | { kind: 'builtin'; criterionId: string; revision?: string }
+  | { kind: 'files'; match: 'all' | 'any'; minimumBytes: number }
+  | { kind: 'json-field'; field: string[]; operator: 'exists' | 'equals'; expected?: string | number | boolean | null }
+  | { kind: 'vulnerabilities'; maxFindings: number }
+  | { kind: 'expert' };
+export interface TemplateCriterionInput {
+  id: string;
+  title: string;
+  description: string;
+  dimension: string;
+  evidenceRequirements: string[];
+  collector: { toolId: 'project-files' | 'osv-scanner'; paths: string[] };
+  evaluation: EvaluationRule;
+  requiresReview: boolean;
+}
+export interface TemplateCriterion extends CriterionDefinition, TemplateCriterionInput {}
+export interface TemplateDraft {
+  id?: string;
+  name: string;
+  description: string;
+  networkMode: 'offline' | 'online';
+  criteria: TemplateCriterionInput[];
+  expectedVersion?: number;
+}
+export interface TemplateVersion {
+  id: string;
+  name: string;
+  description: string;
+  version: number;
+  createdAt: string;
+  policyDigest: string;
+  networkMode: 'offline' | 'online';
+  criteria: TemplateCriterion[];
+  builtIn: boolean;
+}
+export interface TemplateSummary {
+  id: string;
+  name: string;
+  description: string;
+  latestVersion: number;
+  versionCount: number;
+  updatedAt: string;
+  policyDigest: string;
+  builtIn: boolean;
+}
 export interface ToolDefinition {
   id: string;
   name: string;
@@ -46,6 +92,7 @@ export interface CriterionResult {
   evidenceIds: string[];
   coverage: string[];
   limitations: string[];
+  automaticResult?: { status: CriterionStatus; rationale: string };
 }
 export interface ReviewRecord {
   id: string;
@@ -72,7 +119,8 @@ export interface AssessmentRun {
   subject: ProjectInfo;
   framework: { id: string; name: string; version: string; policyDigest: string };
   criteria: CriterionDefinition[];
-  sourceSnapshot: { scope: string; digest: string; files: Array<{ path: string; sha256: string; bytes: number }> };
+  template?: TemplateVersion;
+  sourceSnapshot: { scope: string; digest: string; requestedPaths?: string[]; files: Array<{ path: string; sha256: string; bytes: number }> };
   results: CriterionResult[];
   evidence: EvidenceRecord[];
   reviews: ReviewRecord[];
@@ -84,10 +132,13 @@ export interface AssessmentRun {
 }
 export type RunSummary = Pick<AssessmentRun, 'id' | 'status' | 'startedAt' | 'completedAt' | 'subject' | 'assessmentType'> & {
   counts: Record<CriterionStatus, number>;
+  template?: { id: string; name: string; version: number; policyDigest: string };
 };
 export interface RunInput {
   projectPath: string;
   criterionIds?: string[];
+  templateId?: string;
+  templateVersion?: number;
   networkMode?: 'offline' | 'online';
   onEvent?: (event: RunEvent) => void;
 }

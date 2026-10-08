@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import type { AssessmentRun, CriterionDefinition, ProjectInfo, ReviewInput, RunInput, RunSummary, ToolDefinition } from './types.ts';
+import type { AssessmentRun, CriterionDefinition, ProjectInfo, ReviewInput, RunInput, RunSummary, TemplateSummary, TemplateVersion, ToolDefinition } from './types.ts';
 
 export interface ServerEngine {
   getCatalog(): CriterionDefinition[];
@@ -14,6 +14,11 @@ export interface ServerEngine {
   submitReview(input: ReviewInput): AssessmentRun;
   readEvidence(runId: string, evidenceId: string): Buffer;
   exportReport(runId: string, format: 'json' | 'html'): string;
+  listTemplates(): TemplateSummary[];
+  getTemplate(id: string, version?: number): TemplateVersion | null;
+  listTemplateVersions(id: string): Array<{ version: number; createdAt: string; policyDigest: string }>;
+  saveTemplate(draft: unknown): TemplateVersion;
+  importTemplate(document: unknown): TemplateVersion;
 }
 
 const bodyLimit = 64 * 1024;
@@ -82,6 +87,30 @@ function requireRun(engine: ServerEngine, runId: string): AssessmentRun {
   return run;
 }
 
+function routeId(encoded: string): string {
+  const value = decodeURIComponent(encoded);
+  if (!value.trim() || value.length > 128 || /[/\\\0]/.test(value)) throw new HttpError(400, 'Template identifier is invalid.');
+  return value;
+}
+
+function positiveVersion(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) throw new HttpError(400, 'Template version must be a positive integer.');
+  return value;
+}
+
+function queryVersion(url: URL): number | undefined {
+  const values = url.searchParams.getAll('version');
+  if (!values.length) return undefined;
+  if (values.length !== 1 || !/^[1-9]\d*$/.test(values[0])) throw new HttpError(400, 'Template version must be a positive integer.');
+  return positiveVersion(Number(values[0]));
+}
+
+function requireTemplate(engine: ServerEngine, id: string, version?: number): TemplateVersion {
+  const template = engine.getTemplate(id, version);
+  if (!template) throw new HttpError(404, 'Assessment template or version was not found.');
+  return template;
+}
+
 /** The session token and origin checks prevent unrelated websites from controlling local assessments. */
 export async function startServer(options: { engine: ServerEngine; projectPath: string; dataDir: string; port?: number }) {
   const { engine, projectPath, dataDir } = options;
@@ -116,9 +145,27 @@ export async function startServer(options: { engine: ServerEngine; projectPath: 
       const url = new URL(req.url ?? '/', origin);
       if (url.origin !== origin) throw new HttpError(403, 'This server only accepts its local address.');
       if (req.method === 'GET' && url.pathname === '/api/bootstrap') {
-        return json(res, 200, { projectPath, dataDir, catalog: engine.getCatalog(), tools: await engine.getTools(), runs: engine.listRuns(), sessionToken });
+        return json(res, 200, { projectPath, dataDir, catalog: engine.getCatalog(), tools: await engine.getTools(), runs: engine.listRuns(), templates: engine.listTemplates(), sessionToken });
       }
       if (req.method === 'GET' && url.pathname === '/api/tools') return json(res, 200, await engine.getTools());
+      if (req.method === 'GET' && url.pathname === '/api/templates') return json(res, 200, engine.listTemplates());
+      if (req.method === 'POST' && url.pathname === '/api/templates') return json(res, 201, engine.saveTemplate(await readJson(req)));
+      const templateMatch = /^\/api\/templates\/([^/]+)$/.exec(url.pathname);
+      if (req.method === 'GET' && templateMatch) return json(res, 200, requireTemplate(engine, routeId(templateMatch[1]), queryVersion(url)));
+      const templateVersionsMatch = /^\/api\/templates\/([^/]+)\/versions$/.exec(url.pathname);
+      if (req.method === 'GET' && templateVersionsMatch) {
+        const id = routeId(templateVersionsMatch[1]);
+        requireTemplate(engine, id);
+        return json(res, 200, engine.listTemplateVersions(id));
+      }
+      const templateExportMatch = /^\/api\/templates\/([^/]+)\/export$/.exec(url.pathname);
+      if (req.method === 'GET' && templateExportMatch) {
+        const template = requireTemplate(engine, routeId(templateExportMatch[1]), queryVersion(url));
+        const filename = `template-${template.id.replace(/[^a-zA-Z0-9_-]/g, '_')}-v${template.version}.json`;
+        res.setHeader('Content-Type', 'application/json; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        return res.end(JSON.stringify(template));
+      }
       if (req.method === 'GET' && url.pathname === '/api/runs') return json(res, 200, engine.listRuns());
       if (req.method === 'POST' && url.pathname === '/api/projects/inspect') {
         const body = await readJson(req);
@@ -127,6 +174,11 @@ export async function startServer(options: { engine: ServerEngine; projectPath: 
       if (req.method === 'POST' && url.pathname === '/api/runs') {
         const body = await readJson(req);
         const input: RunInput = { projectPath: textField(body, 'projectPath') };
+        if (body.templateId !== undefined) {
+          if (body.criterionIds !== undefined) throw new HttpError(400, 'Select a template or criterion identifiers, not both.');
+          input.templateId = textField(body, 'templateId', 128);
+          if (body.templateVersion !== undefined) input.templateVersion = positiveVersion(body.templateVersion);
+        } else if (body.templateVersion !== undefined) throw new HttpError(400, 'templateVersion requires templateId.');
         if (body.criterionIds !== undefined) {
           if (!Array.isArray(body.criterionIds) || body.criterionIds.length > 256 || body.criterionIds.some(value => typeof value !== 'string' || !value || value.length > 256)) {
             throw new HttpError(400, 'criterionIds must be an array of criterion identifiers.');
@@ -136,7 +188,7 @@ export async function startServer(options: { engine: ServerEngine; projectPath: 
         if (body.networkMode !== undefined && body.networkMode !== 'offline' && body.networkMode !== 'online') {
           throw new HttpError(400, 'networkMode must be offline or online.');
         }
-        input.networkMode = body.networkMode === 'online' ? 'online' : 'offline';
+        input.networkMode = body.networkMode !== undefined ? body.networkMode as 'offline' | 'online' : input.templateId ? undefined : 'offline';
         return json(res, 201, await engine.runAssessment(input));
       }
 

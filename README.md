@@ -8,9 +8,9 @@ Every run is labelled **self-assessment**. Reviewer names are declared locally, 
 
 ## Watch the demo
 
-[![AssessmentFootprint demo showing a configurable assessment flow and its evidence rules](docs/media/demo-preview.jpg)](docs/media/assessmentfootprint-demo.mp4)
+[![AssessmentFootprint demo showing a configurable assessment flow and its evidence rules](docs/media/demo-preview.jpg)](https://github.com/footprintjs/assessmentfootprint/raw/refs/heads/main/docs/media/assessmentfootprint-demo.mp4)
 
-**[Watch the 42-second demo](docs/media/assessmentfootprint-demo.mp4)** · MP4, 1.1 MB. See configuration, original evidence, human review, and saved replay using fictional demonstration data.
+**[Open / download the 42-second demo](https://github.com/footprintjs/assessmentfootprint/raw/refs/heads/main/docs/media/assessmentfootprint-demo.mp4)** · MP4, 1.1 MB. See configuration, original evidence, human review, and saved replay using fictional demonstration data.
 
 ## Run from this checkout
 

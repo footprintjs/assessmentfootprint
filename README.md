@@ -6,6 +6,12 @@ The browser and CLI use the same assessment engine and saved templates. There is
 
 Every run is labelled **self-assessment**. Reviewer names are declared locally, not independently authenticated. Results are not JRC certification, institutional endorsement, or proof of software safety or legal compliance.
 
+## Watch the demo
+
+[![AssessmentFootprint demo showing a configurable assessment flow and its evidence rules](docs/media/demo-preview.jpg)](docs/media/assessmentfootprint-demo.mp4)
+
+**[Watch the 42-second demo](docs/media/assessmentfootprint-demo.mp4)** · MP4, 1.1 MB. See configuration, original evidence, human review, and saved replay using fictional demonstration data.
+
 ## Run from this checkout
 
 Install [Node.js 24 or newer](https://nodejs.org/en/download), then clone the repository and start the workbench:

@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import type { AssessmentRun, CriterionDefinition, ProjectInfo, ReviewInput, RunInput, RunSummary, TemplateSummary, TemplateVersion, ToolDefinition, WorkflowResponse } from './types.ts';
+import type { AssessmentRun, CriterionDefinition, ProjectInfo, ReviewInput, RunInput, RunSummary, TemplateSummary, TemplateVersion, ToolDefinition, WorkflowResponse, FlowSelection, FlowPreviewInput, FlowPreview, RunStreamPacket } from './types.ts';
 
 export interface ServerEngine {
   getCatalog(): CriterionDefinition[];
@@ -20,6 +20,7 @@ export interface ServerEngine {
   saveTemplate(draft: unknown): TemplateVersion;
   importTemplate(document: unknown): TemplateVersion;
   getWorkflow(runId: string): WorkflowResponse | Promise<WorkflowResponse>;
+  previewFlow(input: FlowPreviewInput): FlowPreview;
 }
 
 const bodyLimit = 64 * 1024;
@@ -116,6 +117,63 @@ function requireTemplate(engine: ServerEngine, id: string, version?: number): Te
   return template;
 }
 
+function selectionInput(body: Record<string, unknown>): FlowSelection {
+  const input: FlowSelection = {};
+  if (body.templateId !== undefined) {
+    if (body.criterionIds !== undefined) throw new HttpError(400, 'Select a template or criterion identifiers, not both.');
+    input.templateId = textField(body, 'templateId', 128);
+    if (body.templateVersion !== undefined) input.templateVersion = positiveVersion(body.templateVersion);
+  } else if (body.templateVersion !== undefined) throw new HttpError(400, 'templateVersion requires templateId.');
+  if (body.criterionIds !== undefined) {
+    if (!Array.isArray(body.criterionIds) || body.criterionIds.length > 256 || body.criterionIds.some(value => typeof value !== 'string' || !value || value.length > 256)) throw new HttpError(400, 'criterionIds must be an array of criterion identifiers.');
+    input.criterionIds = body.criterionIds as string[];
+  }
+  if (body.networkMode !== undefined && body.networkMode !== 'offline' && body.networkMode !== 'online') throw new HttpError(400, 'networkMode must be offline or online.');
+  input.networkMode = body.networkMode !== undefined ? body.networkMode as 'offline' | 'online' : input.templateId ? undefined : 'offline';
+  return input;
+}
+
+function errorDetails(error: unknown): { status: number; error: string } {
+  const domainStatus = error instanceof Error && 'status' in error ? (error as Error & { status: unknown }).status : undefined;
+  const status = typeof domainStatus === 'number' && Number.isInteger(domainStatus) && domainStatus >= 400 && domainStatus < 500 ? domainStatus : error instanceof URIError ? 400 : 500;
+  return { status, error: error instanceof Error ? error.message : 'The request could not be completed.' };
+}
+
+async function streamAssessment(engine: ServerEngine, input: RunInput, res: ServerResponse): Promise<void> {
+  let runId: string | null = null;
+  let disconnected = false;
+  res.on('close', () => { disconnected = true; });
+  // A disconnected or stalled observer cannot cancel collection or execution.
+  res.on('error', () => { disconnected = true; });
+  const send = (packet: RunStreamPacket): void => {
+    if (disconnected || res.destroyed || res.writableEnded) return;
+    try {
+      if (!res.headersSent) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.flushHeaders();
+      }
+      const line = JSON.stringify(packet) + '\n';
+      if (res.writableLength + Buffer.byteLength(line) > 1024 * 1024) { disconnected = true; res.destroy(); return; }
+      res.write(line);
+    } catch { disconnected = true; }
+  };
+  try {
+    const run = await engine.runAssessment({ ...input, onEvent: (event, id) => {
+      if (id) runId = id;
+      const result = id && event.type === 'criterion_completed' ? engine.getRun(id)?.results.find(row => row.criterionId === event.criterionId) : undefined;
+      send({ type: 'event', runId: id ?? null, event, ...(result ? { result } : {}) });
+    } });
+    send({ type: 'result', run });
+    if (!disconnected && !res.destroyed && !res.writableEnded) res.end();
+  } catch (error) {
+    if (!res.headersSent && !disconnected && !res.destroyed) throw error;
+    send({ type: 'error', runId, ...errorDetails(error) });
+    if (!disconnected && !res.destroyed && !res.writableEnded) res.end();
+  }
+}
+
 /** The session token and origin checks prevent unrelated websites from controlling local assessments. */
 export async function startServer(options: { engine: ServerEngine; projectPath: string; dataDir: string; port?: number }) {
   const { engine, projectPath, dataDir } = options;
@@ -176,24 +234,20 @@ export async function startServer(options: { engine: ServerEngine; projectPath: 
         const body = await readJson(req);
         return json(res, 200, await engine.inspectProject(textField(body, 'projectPath')));
       }
-      if (req.method === 'POST' && url.pathname === '/api/runs') {
+      if (req.method === 'POST' && url.pathname === '/api/flow/preview') {
         const body = await readJson(req);
-        const input: RunInput = { projectPath: textField(body, 'projectPath') };
-        if (body.templateId !== undefined) {
-          if (body.criterionIds !== undefined) throw new HttpError(400, 'Select a template or criterion identifiers, not both.');
-          input.templateId = textField(body, 'templateId', 128);
-          if (body.templateVersion !== undefined) input.templateVersion = positiveVersion(body.templateVersion);
-        } else if (body.templateVersion !== undefined) throw new HttpError(400, 'templateVersion requires templateId.');
-        if (body.criterionIds !== undefined) {
-          if (!Array.isArray(body.criterionIds) || body.criterionIds.length > 256 || body.criterionIds.some(value => typeof value !== 'string' || !value || value.length > 256)) {
-            throw new HttpError(400, 'criterionIds must be an array of criterion identifiers.');
-          }
-          input.criterionIds = body.criterionIds as string[];
+        if (body.projectPath !== undefined) throw new HttpError(400, 'Flow previews do not accept or inspect a project path.');
+        if (body.draft !== undefined) {
+          if (body.templateId !== undefined || body.templateVersion !== undefined || body.criterionIds !== undefined || body.networkMode !== undefined) throw new HttpError(400, 'Preview a draft or a saved selection, not both.');
+          return json(res, 200, engine.previewFlow({ draft: body.draft }));
         }
-        if (body.networkMode !== undefined && body.networkMode !== 'offline' && body.networkMode !== 'online') {
-          throw new HttpError(400, 'networkMode must be offline or online.');
-        }
-        input.networkMode = body.networkMode !== undefined ? body.networkMode as 'offline' | 'online' : input.templateId ? undefined : 'offline';
+        return json(res, 200, engine.previewFlow(selectionInput(body)));
+      }
+      if (req.method === 'POST' && (url.pathname === '/api/runs' || url.pathname === '/api/runs/stream')) {
+        const body = await readJson(req);
+        if (body.draft !== undefined) throw new HttpError(400, 'Publish a draft template before running an assessment.');
+        const input: RunInput = { projectPath: textField(body, 'projectPath'), ...selectionInput(body) };
+        if (url.pathname === '/api/runs/stream') return streamAssessment(engine, input, res);
         return json(res, 201, await engine.runAssessment(input));
       }
 
@@ -253,10 +307,8 @@ export async function startServer(options: { engine: ServerEngine; projectPath: 
     })().catch((error: unknown) => {
       if (res.headersSent || res.destroyed) return;
       // Engine domain errors carry an HTTP status; unexpected errors remain server failures.
-      const domainStatus = error instanceof Error && 'status' in error ? (error as Error & { status: unknown }).status : undefined;
-      const status = typeof domainStatus === 'number' && Number.isInteger(domainStatus) && domainStatus >= 400 && domainStatus < 500 ? domainStatus : error instanceof URIError ? 400 : 500;
-      const message = error instanceof Error ? error.message : 'The request could not be completed.';
-      json(res, status, { error: message });
+      const details = errorDetails(error);
+      json(res, details.status, { error: details.error });
       // Drain a rejected body so the connection can finish without buffering it.
       if (!req.destroyed) req.resume();
     });

@@ -40,65 +40,32 @@
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 
       <section id="assessment-view" class="view">
-        <header class="page-intro">
-          <div class="eyebrow">PROJECT ASSESSMENT</div>
-          <h1>Let the evidence speak.</h1>
-          <p>Inspect a local project, examine what each check supports, and add your review where judgment is needed.</p>
-          <div class="intro-tags"><span class="tag">Local execution</span><span class="tag">Self-assessment</span><span class="tag">Scoped findings</span></div>
+        <header class="page-intro flow-intro">
+          <div><div class="eyebrow">FLOW WORKSPACE</div><h1>Your assessment, in flow.</h1><p>Configure a stage, run the connected checks, then explore the evidence.</p></div>
+          <span id="flow-mode" class="tag">Configure</span>
         </header>
-
-        <div class="assessment-grid">
-          <div class="configuration-stack">
-            <section class="panel" aria-labelledby="project-heading">
-              <div class="section-heading"><span class="step-number">01</span><div><h2 id="project-heading">Choose your project</h2><p>Use a folder already on this computer.</p></div></div>
-              <form id="project-form">
-                <label class="field-label" for="project-path">Project folder</label>
-                <div class="input-action"><input id="project-path" name="projectPath" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/your/project" required aria-describedby="project-help"><button id="inspect-button" type="submit" class="button secondary">Inspect folder</button></div>
-                <p id="project-help" class="field-help">Enter the full folder path. The local engine reads project files from this location.</p>
-              </form>
-              <div id="project-preview" class="project-preview" hidden></div>
-            </section>
-
-            <section class="panel" aria-labelledby="criteria-heading">
-              <div class="section-heading"><span class="step-number">02</span><div><h2 id="criteria-heading">Choose an assessment</h2><p>Reuse a published template or select individual checks.</p></div><button id="restore-defaults" type="button" class="text-button" disabled>Use defaults</button></div>
-              <div class="assessment-template-fields">
-                <div class="form-field"><label class="field-label" for="assessment-template">Assessment template</label><select id="assessment-template" disabled><option value="">One-off checks</option></select></div>
-                <div id="assessment-version-field" class="form-field" hidden><label class="field-label" for="assessment-template-version">Published version</label><select id="assessment-template-version"></select></div>
-              </div>
-              <div id="assessment-template-info" class="template-selection-info" hidden></div>
-              <div id="criterion-list" class="criterion-list"><p class="empty-copy">Loading the assessment framework…</p></div>
-              <div class="selection-footer"><span id="selection-count">No criteria selected</span><span>Results are reported individually</span></div>
-            </section>
-
-            <section class="panel" aria-labelledby="network-heading">
-              <div class="section-heading"><span class="step-number">03</span><div><h2 id="network-heading">Network access</h2><p id="network-description">Public advisory lookups are optional. No account is needed.</p></div></div>
-              <fieldset class="network-options"><legend class="sr-only">Network access for this assessment</legend>
-                <label class="network-option"><input type="radio" name="network-mode" value="offline" checked><span><strong>Offline</strong><small>Use local files and installed tools. Online checks may have insufficient evidence.</small></span><span class="tag muted">Default</span></label>
-                <label class="network-option"><input type="radio" name="network-mode" value="online"><span><strong>Allow public lookups</strong><small>Permit supported collectors to fetch public advisory data. See each tool’s network requirements.</small></span></label>
-              </fieldset>
-            </section>
-            <div class="run-controls"><p>Outputs record the project snapshot, evidence, and assessment policy.</p><button id="run-button" type="button" class="button primary" disabled>Run assessment <span aria-hidden="true">↗</span></button></div>
-          </div>
-
-          <aside class="context-stack" aria-label="Assessment context">
-            <section class="context-card dark-card">
-              <span class="small-label">HOW IT WORKS</span><h2>A finding is only as strong as its evidence.</h2>
-              <p>Checks collect evidence. Criterion rules interpret it. Expert review adds an attributed decision.</p>
-              <ol class="process-list"><li><span>1</span> Collect project evidence</li><li><span>2</span> Evaluate each criterion</li><li><span>3</span> Review and export</li></ol>
-            </section>
-            <section class="panel readiness-panel" aria-labelledby="readiness-heading">
-              <div class="compact-heading"><h2 id="readiness-heading">Tool readiness</h2><button type="button" data-view="tools" class="text-button">Setup <span aria-hidden="true">↗</span></button></div>
-              <p class="field-help">Tools for the selected criteria.</p><div id="tool-readiness"><p class="empty-copy">Checking installed tools…</p></div>
-              <p class="readiness-note">An unavailable tool is a limitation, not a negative finding about your project.</p>
-            </section>
-            <section id="live-progress" class="panel progress-panel" hidden aria-labelledby="progress-heading">
-              <div class="compact-heading"><h2 id="progress-heading">Run activity</h2><span id="progress-state" class="badge running">Running</span></div>
-              <p id="progress-project" class="progress-project"></p>
-              <div id="progress-events" class="event-list" aria-live="polite"></div>
-              <button id="open-live-run" type="button" class="text-button" hidden>Open this run <span aria-hidden="true">↗</span></button>
-            </section>
+        <div id="flow-setup" class="flow-setup">
+          <section class="panel flow-project" aria-labelledby="project-heading">
+            <h2 id="project-heading">Project</h2>
+            <form id="project-form"><label class="field-label" for="project-path">Local project folder</label><div class="input-action"><input id="project-path" name="projectPath" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/your/project" required><button id="inspect-button" type="submit" class="button secondary">Inspect</button></div></form>
+            <div id="project-preview" class="project-preview" hidden></div>
+          </section>
+          <section class="panel flow-method" aria-labelledby="criteria-heading">
+            <h2 id="criteria-heading">Assessment method</h2>
+            <div class="assessment-template-fields"><div><label class="field-label" for="assessment-template">Template</label><select id="assessment-template" disabled><option value="">One-off checks</option></select></div><div id="assessment-version-field" hidden><label class="field-label" for="assessment-template-version">Version</label><select id="assessment-template-version"></select></div></div>
+            <details id="flow-options"><summary>Scope, network &amp; check selection</summary><div id="assessment-template-info" class="template-selection-info" hidden></div><div id="criterion-list" class="criterion-list"></div><button id="restore-defaults" type="button" class="text-button" disabled>Use defaults</button><p id="network-description" class="field-help">Public advisory lookups are optional.</p><fieldset class="network-options"><legend>Network access</legend><label class="network-option"><input type="radio" name="network-mode" value="offline" checked><span><strong>Offline</strong><small>Local files and installed tools.</small></span></label><label class="network-option"><input type="radio" name="network-mode" value="online"><span><strong>Allow public lookups</strong><small>Permit supported public advisory downloads.</small></span></label></fieldset></details>
+          </section>
+        </div>
+        <div class="flow-toolbar"><div><strong id="flow-title">Evaluation chart</strong><p id="flow-status" role="status" aria-live="polite">Building the chart from the selected assessment…</p><span id="selection-count" class="sr-only">No criteria selected</span></div><div class="flow-actions"><button id="flow-edit" type="button" class="button secondary" disabled>Edit flow</button><button id="flow-leave-draft" type="button" class="button secondary" hidden>Leave draft</button><button id="flow-new-draft" type="button" class="button secondary" hidden>New assessment</button><button id="flow-report" type="button" class="button secondary" hidden>Open report ↗</button><button id="run-button" type="button" class="button primary" disabled>Run assessment ↗</button></div></div>
+        <div class="flow-workbench">
+          <section id="flow-graph" class="flow-graph-mount" aria-label="Assessment flowchart"><p class="empty-copy">Loading the connected chart…</p></section>
+          <aside id="flow-inspector" class="flow-inspector" aria-label="Stage configuration">
+            <div id="flow-stage-details"></div>
+            <div id="flow-stage-editor" class="template-builder" hidden></div>
+            <section class="flow-readiness" aria-labelledby="readiness-heading"><div class="compact-heading"><h2 id="readiness-heading">Tool readiness</h2><button type="button" data-view="tools" class="text-button">Setup ↗</button></div><div id="tool-readiness"></div></section>
           </aside>
         </div>
+        <section id="live-progress" class="panel flow-activity" hidden aria-labelledby="progress-heading"><div class="compact-heading"><h2 id="progress-heading">Recorded activity</h2><span id="progress-state" class="badge running">Running</span></div><p id="progress-project" class="progress-project"></p><div id="progress-events" class="event-list" aria-live="polite"></div><button id="open-live-run" type="button" class="text-button" hidden>Open this run ↗</button></section>
       </section>
 
       <section id="templates-view" class="view" hidden>

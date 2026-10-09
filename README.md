@@ -72,6 +72,16 @@ node bin/assessment.mjs report RUN_ID --format json --data-dir ./assessment-data
 
 A completed run means that the selected checks finished. It can still contain negative or incomplete findings. Selecting all six criteria normally leaves governance review pending until a person records a judgment in Studio. An empty-scope or skipped criterion is not a security assurance.
 
+## Flow workspace
+
+Studio opens a connected flowchart built by the same FootprintJS chart definition that runs the checks. Choose a local project and a published template, then click a node to inspect its rule, evidence paths, tool, and review requirement. Pan, zoom, or fit the chart; the stage selector provides a keyboard alternative. Arrows show the actual sequential evaluation order, not causal dependencies between findings.
+
+Choose **Configure stage** or **Edit flow** to use the template editor in the side inspector. The initial node opens flow settings; a criterion node opens its rule and collector controls. Copies of the built-in policy become custom drafts. Draft edits are validated by the engine and must be published before running. **Publish flow** selects the returned exact version. Older versions and runs remain unchanged; editing an older saved version cannot silently replace a newer one. **Leave draft** retains the unfinished editor in Templates and restores the workspace's selected published method.
+
+**Run assessment** freezes that selected policy and displays actual engine events on the nodes. File capture is shown as an activity before the evaluation chart, not as a fabricated chart stage. A node's execution state and current criterion finding are separate: a finished check can be negative or inconclusive. Fast steps can finish between browser repaints; the saved replay retains their execution order. The report opens when automation ends, with human review still pending where required.
+
+From a report, **View recorded flow** loads its stored, integrity-checked chart. Its finding badges show current judgments, including subsequent human review; **Open report & replay** exposes the original recorded evaluation state and time-travel controls. Older runs without chart structure retain their existing fallback. A lost live connection does not cancel or automatically restart the local assessment; inspect its saved report or Run history before starting another.
+
 ## Saved templates
 
 Studio's Templates view creates new templates, copies the built-in template, edits saved policies, publishes new versions, and imports/exports JSON manifests. A browser import opens an unpublished copy for inspection; publishing gives it a new local identity and history. Configure the template's name, description, network profile, criterion definitions, evidence requirements, collector paths, evaluation rules, and review requirements. The same published version can then assess different local projects through Studio or the CLI.

@@ -6,6 +6,8 @@ const state = {
   pollTimer: null, activeRunId: null, evidenceRequest: 0, reviewBusy: false,
   templates: [], builtinTemplate: null, assessmentTemplate: null, templateSelectionRequest: 0,
   templateSelectionLoading: false, editor: null, editorRequest: 0, publishing: false,
+  viewRequest: 0, flow: null, flowHandle: null, flowMounting: null, flowRequest: 0, flowTimer: null, flowSelected: '_freeze-inputs',
+  flowEditing: false, flowEditorIndex: null, flowMode: 'draft', flowEvents: [], flowResults: [], flowRun: null, flowValid: false,
   replayRequest: 0, replayAbort: null, replayUnmount: null, replayOpenRunId: null,
 };
 let replayModulePromise = null;
@@ -17,7 +19,7 @@ const statusLabels = {
   evaluation_error: 'Evaluation error', running: 'Running', awaiting_review: 'Awaiting review',
   completed: 'Completed', interrupted: 'Interrupted',
 };
-const viewLabels = { assessment: 'New assessment', templates: 'Templates', history: 'Run history', tools: 'Tools & setup', run: 'Assessment findings' };
+const viewLabels = { assessment: 'Flow workspace', templates: 'Templates', history: 'Run history', tools: 'Tools & setup', run: 'Assessment findings' };
 
 function node(tag, className, content) {
   const element = document.createElement(tag);
@@ -84,12 +86,14 @@ async function api(path, options = {}) {
 }
 
 function setView(view, focus = false) {
+  state.viewRequest += 1;
   if (view !== 'run') {
     disposeReplay();
     state.replayOpenRunId = null;
     const panel = $('#recorded-replay-panel');
     if (panel) panel.open = false;
   }
+  if (view === 'templates' && state.flowEditing) leaveFlowDraft(false);
   state.view = view;
   document.querySelectorAll('.view').forEach(element => { element.hidden = element.id !== `${view}-view`; });
   document.querySelectorAll('.nav-button').forEach(element => {
@@ -98,6 +102,7 @@ function setView(view, focus = false) {
     if (active) element.setAttribute('aria-current', 'page'); else element.removeAttribute('aria-current');
   });
   $('#view-label').textContent = viewLabels[view] || view;
+  if (view === 'assessment') updateFlowGraph();
   if (focus) $('#main').focus({ preventScroll: true });
 }
 
@@ -131,7 +136,7 @@ function renderCriteria() {
     input.addEventListener('change', () => {
       if (input.checked) state.selected.add(criterion.id); else state.selected.delete(criterion.id);
       card.classList.toggle('selected', input.checked);
-      updateSelection();
+      updateSelection(); scheduleFlowPreview();
     });
     const details = node('details', 'criterion-details');
     append(details, node('summary', '', 'Rule & evidence requirements'), node('p', '', criterion.rule));
@@ -142,15 +147,17 @@ function renderCriteria() {
     list.append(card);
   }
   updateSelection();
+  scheduleFlowPreview();
 }
 
 function updateSelection() {
   const count = state.selected.size;
   $('#selection-count').textContent = `${count} ${count === 1 ? 'criterion' : 'criteria'} selected`;
-  $('#run-button').disabled = !state.ready || !count || state.submitting || state.inspecting || state.templateSelectionLoading || !$('#project-path').value.trim();
+  $('#run-button').disabled = !state.ready || !count || state.submitting || state.inspecting || state.templateSelectionLoading || !$('#project-path').value.trim() || state.flowEditing || state.flowMode !== 'draft' || !state.flowValid;
   $('#restore-defaults').hidden = Boolean(state.assessmentTemplate);
   $('#restore-defaults').disabled = !state.ready || state.submitting;
   renderReadiness();
+  updateFlowActions();
 }
 
 function renderReadiness() {
@@ -323,6 +330,7 @@ async function startRun() {
   if (state.submitting || state.inspecting || state.templateSelectionLoading || !state.ready) return;
   if (!$('#project-form').reportValidity()) return;
   if (!state.selected.size) { showNotice('Select at least one criterion.', true); return; }
+  if (!state.flowValid || state.flowEditing || state.flowMode !== 'draft') { showNotice('Choose a valid published flow before running.', true); return; }
   clearNotice();
   const input = state.assessmentTemplate
     ? { projectPath: $('#project-path').value.trim(), templateId: state.assessmentTemplate.id, templateVersion: state.assessmentTemplate.version }
@@ -330,62 +338,39 @@ async function startRun() {
   setConfigurationBusy(true);
   state.activeRunId = null;
   renderProgress(null);
-  const baseline = new Set(state.runs.map(run => run.id));
-  let collecting = true;
-  const normalisePath = path => String(path).replace(/\/+$/, '');
-  const poll = async () => {
-    if (!state.submitting || !collecting) return;
-    try {
-      const summaries = await refreshHistory();
-      if (!state.activeRunId) {
-        const candidates = summaries.filter(run => !baseline.has(run.id) && normalisePath(run.subject.path) === normalisePath(input.projectPath));
-        if (candidates.length === 1) state.activeRunId = candidates[0].id;
-      }
-      if (state.activeRunId) {
-        const run = await api(`/api/runs/${encodeURIComponent(state.activeRunId)}`);
-        if (state.submitting && collecting) {
-          state.run = run;
-          renderProgress(run);
-          if (state.view === 'run') renderRun();
-        }
-      }
-    } catch { /* The final response remains authoritative; polling can recover next time. */ }
-    if (state.submitting && collecting) state.pollTimer = setTimeout(poll, 1200);
-  };
-  state.pollTimer = setTimeout(poll, 500);
+  state.flowMode = 'running'; state.flowEvents = []; state.flowResults = []; state.flowRun = null;
+  state.flowRequest += 1; clearTimeout(state.flowTimer);
+  $('#flow-status').textContent = 'Preparing the project and capturing selected files…';
+  updateFlowGraph(); renderFlowInspector(); updateFlowActions();
   try {
-    const run = await api('/api/runs', { method: 'POST', body: JSON.stringify(input) });
-    collecting = false;
-    state.run = run;
-    state.activeRunId = run.id;
-    renderProgress(run);
-    renderRun();
-    setView('run', true);
+    const run = await streamAssessment(input);
+    state.run = run; state.flowRun = run; state.activeRunId = run.id;
+    state.flowEvents = run.events; state.flowResults = run.results;
+    state.flowMode = run.status === 'interrupted' ? 'interrupted' : 'complete';
+    updateFlowGraph(); renderFlowInspector(); renderProgress(run); renderRun(); setView('run', true);
     await refreshHistory();
-    if (run.status === 'awaiting_review') showNotice('Evidence collection is complete. The expert criteria need your review.');
-    else if (run.status === 'interrupted') showNotice('This run was interrupted. Review the recorded activity and limitations.', true);
-    else showNotice('Assessment saved. Review each finding and its original evidence.');
+    showNotice(run.status === 'awaiting_review' ? 'Automated checks are saved. The report is awaiting human review.' : 'Assessment saved. Explore the findings, evidence, and recorded flow.');
   } catch (error) {
-    collecting = false;
     showNotice(error.message, true);
+    state.flowMode = 'interrupted';
     if (state.activeRunId) {
       try {
-        state.run = await api(`/api/runs/${encodeURIComponent(state.activeRunId)}`);
-        renderProgress(state.run);
-      } catch { /* Keep any evidence already displayed. */ }
-    } else $('#live-progress').hidden = true;
-  } finally {
-    collecting = false;
-    clearTimeout(state.pollTimer);
-    state.pollTimer = null;
-    setConfigurationBusy(false);
-  }
+        const run = await api(`/api/runs/${encodeURIComponent(state.activeRunId)}`);
+        state.run = run; state.flowRun = run; state.flowEvents = run.events; state.flowResults = run.results;
+        state.flowMode = run.status === 'running' ? 'running' : run.status === 'interrupted' ? 'interrupted' : 'complete';
+        renderProgress(run);
+      } catch { /* The run may still be continuing; preserve the recorded events. */ }
+    }
+    $('#flow-status').textContent = 'Live updates ended. Open the report or run history to check the saved state before starting another run.';
+    updateFlowGraph(); renderFlowInspector();
+  } finally { setConfigurationBusy(false); updateFlowActions(); }
 }
 
 async function loadRun(id) {
   clearNotice();
   try {
     state.run = await api(`/api/runs/${encodeURIComponent(id)}`);
+    if (state.flowRun?.id === id) { state.flowRun = state.run; state.flowEvents = state.run.events; state.flowResults = state.run.results; state.flowMode = state.run.status === 'running' ? 'running' : state.run.status === 'interrupted' ? 'interrupted' : 'complete'; updateFlowActions(); }
     renderRun();
     setView('run', true);
     if (state.run.status === 'running' && !state.submitting) showNotice('This assessment is still running. Refresh its findings to see recorded progress.');
@@ -414,7 +399,7 @@ function renderRun() {
   append(tags, badge(run.status), node('span', 'tag', 'Self-assessment'), node('span', 'tag muted', run.networkMode === 'online' ? 'Public lookups allowed' : 'Offline run'));
   title.append(tags);
   const actions = node('div', 'run-actions');
-  append(actions, button('Refresh', 'button secondary small', () => loadRun(run.id)), button('Export HTML', 'button secondary small', event => downloadExport('html', event.currentTarget)), button('Export JSON', 'button secondary small', event => downloadExport('json', event.currentTarget)));
+  append(actions, button('View recorded flow', 'button secondary small', () => showRunFlow(run)), button('Refresh', 'button secondary small', () => loadRun(run.id)), button('Export HTML', 'button secondary small', event => downloadExport('html', event.currentTarget)), button('Export JSON', 'button secondary small', event => downloadExport('json', event.currentTarget)));
   append(intro, title, actions);
   const counts = Object.fromEntries(Object.keys(statusLabels).filter(key => ['satisfied', 'not_satisfied', 'insufficient_evidence', 'not_applicable', 'evaluation_error'].includes(key)).map(key => [key, 0]));
   run.results.forEach(result => { if (result.status in counts) counts[result.status] += 1; });
@@ -835,6 +820,9 @@ async function refreshTemplates() {
 async function selectAssessmentTemplate(id, version) {
   if (state.submitting) { showNotice('Finish the current assessment before changing its template.', true); return false; }
   const request = ++state.templateSelectionRequest;
+  state.flowRequest += 1; clearTimeout(state.flowTimer); state.flowValid = false;
+  state.flowMode = 'draft'; state.flowRun = null; state.flowEvents = []; state.flowResults = [];
+  $('#live-progress').hidden = true;
   clearNotice();
   if (!id) {
     state.assessmentTemplate = null;
@@ -932,7 +920,7 @@ async function openTemplateEditor(id, version) {
     const latestVersion = Math.max(template.version, ...versions.map(item => item.version));
     state.editor = {
       source: template, draft: templateDraftFrom(template), versions,
-      expectedVersion: latestVersion, readonly: template.builtIn, dirty: false, origin: '',
+      expectedVersion: template.version, readonly: template.builtIn, dirty: false, origin: '',
     };
     renderTemplateEditor(); renderTemplateLibrary();
   } catch (error) { if (request === state.editorRequest) showNotice(`Template could not be loaded: ${error.message}`, true); }
@@ -941,6 +929,7 @@ async function openTemplateEditor(id, version) {
 function markEditorDirty() {
   if (!state.editor || state.editor.readonly) return;
   state.editor.dirty = true;
+  if (state.flowEditing) scheduleFlowPreview();
   $('#template-publish-message').hidden = true;
   updateEditorActions();
 }
@@ -972,6 +961,7 @@ function updateEditorActions() {
     input.disabled = state.publishing || input.dataset.fixed === 'true' || (readonly && input.id !== 'editor-template-version');
   });
   $('#template-form').querySelectorAll('.criterion-editor-order button').forEach(control => { control.disabled = state.publishing || control.dataset.boundary === 'true'; });
+  if (state.flowEditing) filterFlowEditor();
   $('#export-template').disabled = !source || state.publishing;
   $('#new-template').disabled = state.publishing;
   $('#import-template').disabled = state.publishing;
@@ -1065,7 +1055,7 @@ function renderEditorCriteria() {
   if (!editor.draft.criteria.length) { list.append(node('p', 'empty-copy', 'Add at least one criterion before publishing.')); return; }
   editor.draft.criteria.forEach((criterion, index) => {
     const prefix = `template-criterion-${index}`;
-    const card = node('details', 'criterion-editor'); card.open = true;
+    const card = node('details', 'criterion-editor'); card.open = true; card.dataset.criterionIndex = String(index);
     const summary = node('summary');
     const summaryCopy = node('span', 'criterion-editor-summary');
     const summaryNumber = node('span', 'step-number', String(index + 1).padStart(2, '0'));
@@ -1077,11 +1067,13 @@ function renderEditorCriteria() {
     if (!editor.readonly) {
       const order = node('div', 'criterion-editor-order');
       const up = button('↑ Move up', 'text-button', () => {
+        if (state.flowEditing) state.flowEditorIndex = index - 1;
         const items = editor.draft.criteria; [items[index - 1], items[index]] = [items[index], items[index - 1]];
         markEditorDirty(); renderEditorCriteria(); updateEditorActions();
       });
       up.disabled = index === 0; up.dataset.boundary = String(index === 0); up.setAttribute('aria-label', `Move criterion ${index + 1} up`);
       const down = button('↓ Move down', 'text-button', () => {
+        if (state.flowEditing) state.flowEditorIndex = index + 1;
         const items = editor.draft.criteria; [items[index + 1], items[index]] = [items[index], items[index + 1]];
         markEditorDirty(); renderEditorCriteria(); updateEditorActions();
       });
@@ -1180,6 +1172,7 @@ async function publishTemplate() {
       const detail = control.closest('details'); if (detail) detail.open = true;
     }
   });
+  if (state.flowEditing) revealInvalidFlowField(form);
   if (!form.reportValidity()) return;
   let draft;
   try { draft = prepareTemplateDraft(); } catch (error) { editorMessage(error.message, true); return; }
@@ -1200,7 +1193,12 @@ async function publishTemplate() {
     if (refreshes[1].status === 'fulfilled') state.templates = refreshes[1].value;
     renderTemplateLibrary(); renderAssessmentTemplateSelector();
     if (refreshes.some(result => result.status === 'rejected')) editorMessage(`${published.name}, version ${published.version}, is published. The template list could not be fully refreshed; use Refresh to try again.`);
-    if (state.assessmentTemplate?.id === published.id) {
+    if (state.flowEditing) {
+      leaveFlowDraft(false);
+      const selected = await selectAssessmentTemplate(published.id, published.version);
+      if (selected) showNotice(`${published.name}, version ${published.version}, is ready to run.`);
+      else showNotice(`${published.name}, version ${published.version}, was published, but could not be loaded. Choose it again in the assessment template selector.`, true);
+    } else if (state.assessmentTemplate?.id === published.id) {
       renderAssessmentVersionOptions(state.editor.versions, state.assessmentTemplate.version);
       showNotice(`Version ${published.version} was published. The assessment selection stays pinned to version ${state.assessmentTemplate.version} until you choose another version.`);
     }
@@ -1259,15 +1257,269 @@ async function importTemplateFile(file) {
   finally { $('#template-import-file').value = ''; }
 }
 
+function updateFlowActions() {
+  if (!$('#flow-edit')) return;
+  const recorded = state.flowMode !== 'draft';
+  $('#flow-mode').textContent = state.flowEditing ? 'Unpublished draft' : recorded ? state.flowMode === 'running' ? 'Running' : 'Recorded flow' : 'Configure';
+  $('#flow-title').textContent = state.flowRun ? `${state.flowRun.subject.name} · evaluation` : state.flowEditing ? `${state.editor?.draft.name || 'Untitled flow'} · draft` : state.assessmentTemplate?.name || 'One-off evaluation';
+  $('#flow-edit').hidden = recorded || state.flowEditing;
+  document.querySelectorAll('#flow-stage-details button[data-configure]').forEach(control => { control.disabled = !state.flowValid || state.templateSelectionLoading || state.submitting; });
+  $('#flow-edit').disabled = !state.flowValid || state.submitting || state.templateSelectionLoading || !state.selected.size;
+  $('#flow-leave-draft').hidden = !state.flowEditing;
+  $('#flow-leave-draft').disabled = state.publishing;
+  $('#flow-new-draft').hidden = !recorded || state.submitting || state.flowMode === 'running';
+  $('#flow-report').hidden = !state.flowRun;
+  $('#run-button').hidden = recorded;
+  $('#flow-setup').hidden = recorded || state.flowEditing;
+  $('.flow-readiness').hidden = recorded || state.flowEditing;
+}
+
+function flowSelection() {
+  return state.assessmentTemplate
+    ? { templateId: state.assessmentTemplate.id, templateVersion: state.assessmentTemplate.version }
+    : { criterionIds: [...state.selected], networkMode: $('input[name="network-mode"]:checked').value };
+}
+
+function scheduleFlowPreview() {
+  if (!state.ready || state.submitting || state.flowMode !== 'draft') return;
+  clearTimeout(state.flowTimer);
+  state.flowRequest += 1;
+  state.flowValid = false;
+  $('#flow-status').textContent = state.flowEditing ? 'Draft changed. Validating the chart…' : 'Building the selected chart…';
+  updateSelection();
+  state.flowTimer = setTimeout(refreshFlowPreview, 200);
+}
+
+async function refreshFlowPreview() {
+  if (!state.ready || state.submitting || state.flowMode !== 'draft') return;
+  const request = ++state.flowRequest;
+  try {
+    const selection = state.flowEditing ? { draft: prepareTemplateDraft() } : flowSelection();
+    const flow = await api('/api/flow/preview', { method: 'POST', body: JSON.stringify(selection) });
+    if (request !== state.flowRequest) return;
+    state.flow = flow; state.flowValid = true;
+    if (state.flowEditing && state.flowEditorIndex !== null) state.flowSelected = flow.criteria[state.flowEditorIndex]?.id || '_freeze-inputs';
+    if (state.flowSelected !== '_freeze-inputs' && !flow.criteria.some(c => c.id === state.flowSelected)) state.flowSelected = '_freeze-inputs';
+    $('#flow-status').textContent = state.flowEditing ? 'Validated draft · publish this version before running.' : `${flow.criteria.length} checks · ${flow.networkMode === 'offline' ? 'offline' : 'public lookups allowed'} · click a node to inspect or configure.`;
+    updateFlowGraph();
+    if (!state.flowEditing) renderFlowInspector();
+  } catch (error) {
+    if (request !== state.flowRequest) return;
+    state.flowValid = false;
+    $('#flow-status').textContent = `Chart needs valid configuration. ${error.message}${state.flow ? ' The previous valid chart remains visible.' : ''}`;
+    if (!state.flow) $('#flow-graph').replaceChildren(node('p', 'empty-copy', 'Select at least one valid check to build the flow.'));
+  } finally { if (request === state.flowRequest) updateSelection(); }
+}
+
+async function updateFlowGraph() {
+  if (!state.flow || state.view !== 'assessment') return;
+  const options = () => ({ structure: state.flow.structure, criteria: state.flow.criteria, mode: state.flowMode, selectedId: state.flowSelected, events: state.flowEvents, results: state.flowResults, onSelect: selectFlowStage });
+  try {
+    if (state.flowHandle) { state.flowHandle.update(options()); return; }
+    if (state.flowMounting) return;
+    state.flowMounting = Promise.all([loadReplayModule(), loadReplayStyles()]);
+    const [module] = await state.flowMounting;
+    if (state.view !== 'assessment' || !state.flow) return;
+    state.flowHandle = module.mountWorkspace($('#flow-graph'), options());
+  } catch (error) {
+    $('#flow-graph').replaceChildren(node('p', 'empty-copy', `The chart could not be displayed. ${error.message}`), button('Try loading the chart again', 'button secondary', () => updateFlowGraph()));
+  } finally { state.flowMounting = null; }
+}
+
+function selectFlowStage(id) {
+  if (state.publishing) return;
+  state.flowSelected = id;
+  if (state.flowEditing) {
+    state.flowEditorIndex = id === '_freeze-inputs' ? null : state.editor.draft.criteria.findIndex(c => c.id === id);
+    if (state.flowEditorIndex < 0) state.flowEditorIndex = null;
+    filterFlowEditor();
+  } else renderFlowInspector();
+  updateFlowGraph();
+}
+
+function flowConfigureButton(label) {
+  const control = button(label, 'button secondary', beginFlowEdit);
+  control.dataset.configure = 'true';
+  control.disabled = !state.flowValid || state.templateSelectionLoading || state.submitting;
+  return control;
+}
+
+function renderFlowInspector() {
+  const host = $('#flow-stage-details'); host.replaceChildren(); host.hidden = state.flowEditing;
+  $('#flow-stage-editor').hidden = !state.flowEditing;
+  if (state.flowEditing || !state.flow) return;
+  const id = state.flowSelected;
+  const criterion = state.flow.criteria.find(item => item.id === id);
+  append(host, node('div', 'eyebrow', state.flowMode === 'draft' ? 'SELECTED STAGE' : 'RECORDED STAGE'), node('h2', '', criterion?.title || 'Initialize evaluation'));
+  if (!criterion) {
+    host.append(node('p', 'flow-inspector-copy', 'FootprintJS initializes the evaluation state before visiting the checks. The engine captures selected files before this chart begins.'));
+    if (state.flowMode === 'draft') host.append(flowConfigureButton('Configure this flow'));
+    return;
+  }
+  host.append(node('p', 'flow-criterion-meta', `${criterion.id} · ${criterion.dimension}`));
+  const result = state.flowResults.find(item => item.criterionId === id);
+  if (result) {
+    append(host, node('h3', '', 'Current finding'), badge(result.status), node('p', 'flow-inspector-copy', result.rationale));
+    if (state.flowRun?.reviews.some(review => review.criterionId === id)) host.append(node('p', 'flow-review-note', 'This finding includes later human review. Open the recorded replay to inspect the original automated step.'));
+    if (result.automaticResult) append(host, node('h3', '', 'Automatic result before review'), badge(result.automaticResult.status));
+  }
+  append(host, node('h3', '', 'Rule'), node('p', 'flow-inspector-copy', criterion.rule));
+  const tool = toolFor(criterion.collector?.toolId);
+  append(host, node('h3', '', 'Evidence & tool'), node('p', 'flow-inspector-copy', tool ? `${state.flowMode === 'draft' ? '' : 'Installed now: '}${tool.name} · ${tool.available ? 'available' : 'unavailable'}` : 'Tool availability is not recorded.'));
+  const paths = node('ul', 'flow-paths');
+  (criterion.collector?.paths || criterion.evidenceRequirements || []).forEach(path => paths.append(node('li', '', path)));
+  host.append(paths);
+  if (criterion.requiresReview || criterion.mode === 'expert') host.append(node('p', 'flow-review-note', 'An attributed human decision is required in the report.'));
+  if (state.flowMode === 'draft') host.append(flowConfigureButton('Configure stage'));
+  else if (state.flowRun && result) {
+    const evidence = state.flowRun.evidence.filter(item => result.evidenceIds.includes(item.id));
+    evidence.forEach(item => host.append(button(`Inspect ${item.source}`, 'text-button', () => openEvidence(state.flowRun.id, item))));
+    host.append(button('Open report & replay', 'button secondary', () => openFlowReport(true)));
+  }
+}
+
+async function beginFlowEdit() {
+  if (state.submitting || state.flowMode !== 'draft' || !state.flow || state.publishing || !state.flowValid || state.templateSelectionLoading) return;
+  const selected = state.flowSelected;
+  const source = state.assessmentTemplate;
+  const flow = state.flow;
+  const generation = state.flowRequest;
+  const viewGeneration = state.viewRequest;
+  let versions = [];
+  try { if (source && !source.builtIn) versions = await api(`/api/templates/${encodeURIComponent(source.id)}/versions`); }
+  catch (error) { showNotice(`The current template versions could not be loaded. ${error.message}`, true); return; }
+  if (state.submitting || state.view !== 'assessment' || state.flow !== flow || state.flowRequest !== generation || state.viewRequest !== viewGeneration || state.assessmentTemplate !== source) return;
+  const draft = templateDraftFrom(flow.template);
+  if (!source || source.builtIn) draft.name = `${source?.name || 'Local assessment'} copy`;
+  state.editorRequest += 1;
+  state.editor = { source: source && !source.builtIn ? source : null, draft, versions, expectedVersion: source && !source.builtIn ? source.version : undefined, readonly: false, dirty: true, origin: source ? `Copied from ${source.name}, version ${source.version}.` : 'Based on the selected one-off checks.' };
+  state.flowEditing = true;
+  state.flowEditorIndex = selected === '_freeze-inputs' ? null : draft.criteria.findIndex(c => c.id === selected);
+  if (state.flowEditorIndex < 0) state.flowEditorIndex = null;
+  $('#flow-stage-editor').append($('#template-form'));
+  renderTemplateEditor(); renderTemplateLibrary(); renderFlowInspector(); updateFlowActions(); scheduleFlowPreview();
+}
+
+function filterFlowEditor() {
+  if (!state.flowEditing) return;
+  const form = $('#template-form');
+  const settings = state.flowEditorIndex === null;
+  form.classList.toggle('flow-show-settings', settings);
+  for (const card of $('#template-criteria-editor').children) card.hidden = Number(card.dataset.criterionIndex) !== state.flowEditorIndex;
+  if (state.flowEditorIndex !== null && !state.editor.draft.criteria[state.flowEditorIndex]) {
+    state.flowEditorIndex = null; filterFlowEditor(); return;
+  }
+  $('#template-editor-title').textContent = settings ? 'Flow settings' : state.editor.draft.criteria[state.flowEditorIndex].title || 'New stage';
+  $('#use-editor-template').hidden = true;
+  $('#copy-template').hidden = true;
+  $('#template-version-controls').hidden = true;
+  $('#publish-template').textContent = state.publishing ? 'Publishing…' : `Publish flow · v${state.editor.source ? state.editor.expectedVersion + 1 : 1}`;
+  $('#publish-template').disabled = state.publishing || !state.editor.draft.criteria.length;
+}
+
+function revealInvalidFlowField(form) {
+  const invalid = [...form.querySelectorAll('input,select,textarea')].find(control => !control.disabled && !control.checkValidity());
+  if (!invalid) return;
+  const card = invalid.closest('.criterion-editor');
+  state.flowEditorIndex = card ? Number(card.dataset.criterionIndex) : null;
+  filterFlowEditor();
+}
+
+function leaveFlowDraft(refresh = true) {
+  if (!state.flowEditing || (state.publishing && refresh)) return;
+  state.flowEditing = false;
+  state.flowValid = false; state.flowRequest += 1; clearTimeout(state.flowTimer);
+  $('#templates-view .template-builder').append($('#template-form'));
+  $('#template-form').classList.remove('flow-show-settings');
+  $('#template-criteria-editor').querySelectorAll('.criterion-editor').forEach(card => { card.hidden = false; });
+  renderTemplateEditor(); renderFlowInspector(); updateFlowActions();
+  scheduleFlowPreview();
+  if (refresh) { showNotice('Your unpublished draft remains in Templates. The workspace uses the selected published version.'); }
+}
+
+function resetFlowDraft() {
+  if (state.submitting || state.flowMode === 'running') return;
+  state.flowMode = 'draft'; state.flowRun = null; state.flowEvents = []; state.flowResults = []; state.flowSelected = '_freeze-inputs';
+  $('#live-progress').hidden = true;
+  updateFlowActions(); scheduleFlowPreview(); setView('assessment', true);
+}
+
+async function streamAssessment(input) {
+  const response = await fetch('/api/runs/stream', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Assessment-Session': state.sessionToken }, body: JSON.stringify(input) });
+  if (!response.ok) { let body; try { body = await response.json(); } catch { /* Keep HTTP status. */ } throw new Error(body?.error || `The local engine returned an error (${response.status}).`); }
+  if (!response.body) throw new Error('This browser did not provide a live response. Check Run history for the assessment.');
+  const reader = response.body.getReader(); const decoder = new TextDecoder(); let pending = ''; let result = null; let streamError = null;
+  const receive = line => {
+    if (!line.trim()) return;
+    const packet = JSON.parse(line);
+    if (packet.runId) state.activeRunId = packet.runId;
+    if (packet.type === 'result') { result = packet.run; return; }
+    if (packet.type === 'error') { streamError = new Error(packet.error); return; }
+    if (packet.type !== 'event') return;
+    state.flowEvents.push(packet.event);
+    if (packet.result) { state.flowResults = [...state.flowResults.filter(row => row.criterionId !== packet.result.criterionId), packet.result]; }
+    $('#flow-status').textContent = packet.event.message;
+    renderProgress({ status: 'running', subject: { name: state.project?.name || input.projectPath }, events: state.flowEvents });
+    $('#open-live-run').hidden = true;
+    updateFlowGraph(); renderFlowInspector();
+  };
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      pending += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      let newline;
+      while ((newline = pending.indexOf('\n')) >= 0) { receive(pending.slice(0, newline)); pending = pending.slice(newline + 1); }
+      if (pending.length > 32 * 1024 * 1024) throw new Error('The live response exceeded the display limit. Check Run history for the saved assessment.');
+      if (done) break;
+    }
+    receive(pending);
+  } finally { reader.releaseLock(); }
+  if (streamError) throw streamError;
+  if (!result) throw new Error('The connection ended before a final result arrived. The local assessment may still be running. Check Run history.');
+  return result;
+}
+
+async function showRunFlow(run) {
+  if (state.submitting) { showNotice('The active assessment is still running.'); return; }
+  const request = ++state.flowRequest;
+  const viewGeneration = state.viewRequest;
+  try {
+    const workflow = await api(`/api/runs/${encodeURIComponent(run.id)}/workflow`);
+    if (state.submitting || request !== state.flowRequest || state.viewRequest !== viewGeneration) return;
+    if (workflow.kind !== 'replay') { state.run = run; state.replayOpenRunId = run.id; renderRun(); setView('run', true); showNotice(workflow.note || 'This older run has no recorded chart. Its original findings remain available.'); return; }
+    leaveFlowDraft(false);
+    state.flowRequest += 1; clearTimeout(state.flowTimer);
+    state.flow = { structure: workflow.recording.structure, criteria: run.template?.criteria || run.criteria, template: run.template, networkMode: run.networkMode };
+    state.flowRun = run; state.flowEvents = run.events; state.flowResults = run.results;
+    state.flowMode = run.status === 'interrupted' ? 'interrupted' : run.status === 'running' ? 'running' : 'complete';
+    state.flowSelected = '_freeze-inputs';
+    $('#flow-status').textContent = `Recorded chart · ${run.status === 'awaiting_review' ? 'automation complete; human review pending' : statusLabels[run.status]} · read-only`;
+    setView('assessment', true); updateFlowActions(); renderFlowInspector(); renderProgress(run);
+  } catch (error) { showNotice(`The recorded chart could not be opened. ${error.message}`, true); }
+}
+
+function openFlowReport(replay = false) {
+  if (!state.flowRun) return;
+  state.run = state.flowRun;
+  if (replay) state.replayOpenRunId = state.run.id;
+  renderRun(); setView('run', true);
+}
+
+$('#flow-edit').addEventListener('click', beginFlowEdit);
+$('#flow-leave-draft').addEventListener('click', () => leaveFlowDraft());
+$('#flow-new-draft').addEventListener('click', resetFlowDraft);
+$('#flow-report').addEventListener('click', () => openFlowReport());
+
 document.querySelectorAll('[data-view]').forEach(element => element.addEventListener('click', async () => {
   const view = element.dataset.view;
+  if (view === 'assessment' && state.flowMode !== 'draft' && !state.submitting) resetFlowDraft();
   setView(view, true);
   try { if (view === 'history') await refreshHistory(); else if (view === 'tools') await refreshTools(); else if (view === 'templates') await refreshTemplates(); }
   catch (error) { showNotice(error.message, true); }
 }));
 $('#project-form').addEventListener('submit', event => { event.preventDefault(); inspectProject(); });
 $('#project-path').addEventListener('input', () => { state.project = null; renderProject(null); updateSelection(); });
-document.querySelectorAll('input[name="network-mode"]').forEach(input => input.addEventListener('change', renderReadiness));
+document.querySelectorAll('input[name="network-mode"]').forEach(input => input.addEventListener('change', () => { renderReadiness(); scheduleFlowPreview(); }));
 $('#assessment-template').addEventListener('change', event => selectAssessmentTemplate(event.currentTarget.value));
 $('#assessment-template-version').addEventListener('change', event => { if (state.assessmentTemplate) selectAssessmentTemplate(state.assessmentTemplate.id, Number(event.currentTarget.value)); });
 $('#new-template').addEventListener('click', startNewTemplate);
@@ -1282,6 +1534,7 @@ $('#template-network').addEventListener('change', event => { if (state.editor) {
 $('#add-template-criterion').addEventListener('click', () => {
   if (!state.editor || state.editor.readonly || state.publishing) return;
   state.editor.draft.criteria.push(newTemplateCriterion(state.editor.draft.criteria));
+  if (state.flowEditing) state.flowEditorIndex = state.editor.draft.criteria.length - 1;
   markEditorDirty(); renderEditorCriteria();
   $('#template-criteria-editor').lastElementChild?.querySelector('input')?.focus();
 });

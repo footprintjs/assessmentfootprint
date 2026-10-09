@@ -5,12 +5,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, realpathSync, lstatSync, statSync, existsSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, resolve, basename, sep } from 'node:path';
-import { flowChart, FlowChartExecutor } from 'footprintjs';
+import { FlowChartExecutor } from 'footprintjs';
 import { metrics } from 'footprintjs/recorders';
-import type { AssessmentRun, CriterionDefinition, CriterionResult, CriterionStatus, EvidenceRecord, ProjectInfo, ReviewInput, RunEvent, RunInput, RunSummary, ToolDefinition, TemplateDraft, TemplateVersion, TemplateSummary, TemplateCriterion, WorkflowRecording, WorkflowResponse } from './types.ts';
+import type { AssessmentRun, CriterionDefinition, CriterionResult, CriterionStatus, EvidenceRecord, ProjectInfo, ReviewInput, RunEvent, RunInput, RunSummary, ToolDefinition, TemplateDraft, TemplateVersion, TemplateSummary, TemplateCriterion, WorkflowRecording, WorkflowResponse, FlowSelection, FlowPreviewInput, FlowPreview } from './types.ts';
 import { AssessmentError } from './errors.ts';
 export { AssessmentError } from './errors.ts';
 import { builtInTemplate, DEFAULT_TEMPLATE_ID, generatedTemplateId, normalizeTemplateDraft, policyDigest, templateIdentifier, templateInputPaths } from './templates.ts';
+import { buildAssessmentChart, INITIALIZE_STAGE_ID } from './chart.ts';
 
 const execFileAsync = promisify(execFile);
 const VERSION = '0.3.0';
@@ -27,7 +28,6 @@ const CATALOG: CriterionDefinition[] = [
   { id: 'dependency-vulnerabilities', title: 'Known dependency vulnerabilities', dimension: 'Dependency security', mode: 'automatic', defaultEnabled: true, description: 'OSV checks the frozen root lockfile against available advisory data.', rule: 'A successful OSV v2 scan reporting known vulnerabilities is not satisfied; a successful scan of identified packages reporting none is satisfied within its documented scope. Unavailable tools or data remain insufficient evidence.', evidenceRequirements: ['Supported root lockfile', 'OSV-Scanner v2', 'Advisory data'] },
   { id: 'governance-review', title: 'Governance transparency review', dimension: 'Governance & stewardship', mode: 'expert', defaultEnabled: true, description: 'A human assesses how project decisions and contribution processes are documented.', rule: 'Review available governance and contribution documents, identify who makes decisions and how contributors participate, and provide a rationale. Document availability alone never satisfies this criterion.', evidenceRequirements: ['Governance or contribution documentation', 'Attributed reviewer decision and rationale'] },
 ];
-type TraceState = { activeCriterion: string; findings: Array<{ criterionId: string; status: CriterionStatus; evidenceIds: string[] }>; subjectDigest: string };
 type CapturedFile = { path: string; bytes: Buffer; sha256: string };
 
 function sha(value: string | Buffer): string { return createHash('sha256').update(value).digest('hex'); }
@@ -153,7 +153,7 @@ export class AssessmentEngine {
     return this.saveTemplate({ id, name: source.name, description: source.description, networkMode: source.networkMode, criteria: source.criteria, ...(source.expectedVersion !== undefined ? { expectedVersion: source.expectedVersion } : {}) });
   }
 
-  private resolveRunTemplate(input: RunInput): TemplateVersion {
+  private resolveRunTemplate(input: FlowSelection): TemplateVersion {
     if (input.templateVersion !== undefined && input.templateId === undefined) throw new AssessmentError(400, 'A template version requires a template identifier.');
     if (input.templateId !== undefined) {
       if (input.criterionIds !== undefined) throw new AssessmentError(400, 'A saved template cannot be combined with one-off criterion selection. Publish a new version instead.');
@@ -170,6 +170,21 @@ export class AssessmentEngine {
     if (input.criterionIds === undefined && (input.networkMode === undefined || input.networkMode === defaultTemplate.networkMode)) return defaultTemplate;
     const oneOff = { ...defaultTemplate, id: 'one-off', name: 'One-off open-source assessment', version: 0, builtIn: false, networkMode: input.networkMode ?? 'offline', criteria: selected.map(id => defaultTemplate.criteria.find(c => c.id === id)!) };
     return { ...oneOff, policyDigest: policyDigest(oneOff) };
+  }
+
+  previewFlow(input: FlowPreviewInput = {}): FlowPreview {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new AssessmentError(400, 'Provide an assessment selection or template draft.');
+    let template: TemplateVersion;
+    if (input.draft !== undefined) {
+      if (input.templateId !== undefined || input.templateVersion !== undefined || input.criterionIds !== undefined || input.networkMode !== undefined) throw new AssessmentError(400, 'Preview a draft or a saved selection, not both.');
+      const normalized = normalizeTemplateDraft(input.draft, CATALOG);
+      template = { id: normalized.id ?? 'draft-preview', name: normalized.name, description: normalized.description, version: 0, createdAt: stamp(), policyDigest: policyDigest(normalized), networkMode: normalized.networkMode, criteria: normalized.criteria, builtIn: false };
+    } else {
+      if (input.networkMode !== undefined && input.networkMode !== 'offline' && input.networkMode !== 'online') throw new AssessmentError(400, 'Network mode must be offline or online.');
+      template = this.resolveRunTemplate(input);
+    }
+    const chart = buildAssessmentChart(template.criteria);
+    return structuredClone({ structure: chart.buildTimeStructure, criteria: template.criteria, template, networkMode: template.networkMode });
   }
 
   async getTools(): Promise<ToolDefinition[]> {
@@ -211,9 +226,16 @@ export class AssessmentEngine {
     const selected = template.criteria.map(c => c.id);
     this.active = true;
     let run: AssessmentRun | undefined;
+    const preparationEvents: RunEvent[] = [];
+    const emit = (event: RunEvent): void => {
+      if (run) { run.events.push(event); this.save(run); }
+      else preparationEvents.push(event);
+      try { input.onEvent?.(structuredClone(event), run?.id ?? null); } catch { /* Observers cannot change or interrupt the assessment record. */ }
+    };
     try {
       const root = await this.projectRoot(input.projectPath);
       const requestedPaths = templateInputPaths(template);
+      emit({ type: 'collection_started', message: 'Capturing the selected policy’s configured local inputs.', timestamp: stamp() });
       const captured = await this.capture(root, requestedPaths);
       const subject = await this.describeProject(root, captured);
       const manifest = parseManifest(captured.find(f => f.path === 'package.json'));
@@ -222,6 +244,7 @@ export class AssessmentEngine {
       subject.detectedFiles = captured.map(f => f.path);
       const snapshotFiles = captured.map(f => ({ path: f.path, sha256: f.sha256, bytes: f.bytes.length }));
       run = { id: randomUUID(), status: 'running', startedAt: stamp(), completedAt: null, automationCompletedAt: null, revision: 1, subject, framework: { id: template.id, name: template.name, version: String(template.version), policyDigest: template.policyDigest }, criteria: structuredClone(template.criteria), template: structuredClone(template), sourceSnapshot: { scope: 'Evidence files configured by this template, plus root package identity when present. Other project files, installed dependencies, and hosting configuration are not assessed.', digest: sha(JSON.stringify({ requestedPaths, files: snapshotFiles })), requestedPaths, files: snapshotFiles }, results: [], evidence: [], reviews: [], events: [], assessmentType: 'self-assessment', execution: { ownerPid: process.pid }, networkMode: template.networkMode, limitations: ['This is a self-assessment, not certification or an independent review.', 'Built-in checks cover root Node.js metadata; custom checks cover only their explicitly configured files and rules.', 'File presence checks do not establish security effectiveness, licence compatibility, or governance quality.', 'The source digest covers the listed assessment inputs, not every file in the repository.', 'A Git commit is contextual metadata; working-tree changes are not checked and the captured inputs may differ from that commit.'] };
+      run.events.push(...preparationEvents);
       const assessment = run;
       const artifactRoot = join(this.dataDir, 'runs', assessment.id);
       mkdirSync(artifactRoot, { recursive: true, mode: 0o700 });
@@ -232,8 +255,8 @@ export class AssessmentEngine {
         mkdirSync(resolve(target, '..'), { recursive: true, mode: 0o700 });
         writeFileSync(target, file.bytes, { mode: 0o600 });
       }
-      const emit = (event: RunEvent): void => { assessment.events.push(event); this.save(assessment); try { input.onEvent?.(event); } catch { /* Observer failures do not change assessment evidence. */ } };
       emit({ type: 'run_started', message: `Assessment started for ${subject.name}.`, timestamp: stamp() });
+      emit({ type: 'collection_completed', message: `Captured and froze ${captured.length} selected input file(s). Evaluation has not started.`, timestamp: stamp() });
       const toolState = await this.getTools();
       const evidenceFor = (file: CapturedFile): string => {
         let existing = assessment.evidence.find(e => e.toolId === 'project-files' && e.source === file.path);
@@ -338,22 +361,24 @@ export class AssessmentEngine {
         }
         return row;
       };
-      const chart = flowChart<TraceState>('Initialize recorded assessment', scope => { scope.subjectDigest = assessment.sourceSnapshot.digest; scope.findings = []; scope.activeCriterion = ''; }, '_freeze-inputs');
-      for (const criterion of template.criteria) {
-        const criterionId = criterion.id;
-        chart.addFunction(criterion.title, async scope => {
-          scope.activeCriterion = criterionId;
+      const builtChart = buildAssessmentChart(template.criteria, {
+        sourceDigest: assessment.sourceSnapshot.digest,
+        initializeStarted: () => emit({ type: 'stage_started', stageId: INITIALIZE_STAGE_ID, message: 'Initializing the recorded evaluation state.', timestamp: stamp() }),
+        evaluate: async (criterion, scope) => {
+          const criterionId = criterion.id;
           emit({ type: 'criterion_started', criterionId, message: `Checking ${criterion.title}.`, timestamp: stamp() });
           let row: CriterionResult;
           try { row = await evaluateCriterion(criterion); } catch (error) { row = result(criterionId, 'evaluation_error', `Evaluation failed: ${plainError(error)}`, []); }
           assessment.results.push(row);
           scope.findings = [...scope.findings, { criterionId, status: row.status, evidenceIds: row.evidenceIds }];
           emit({ type: 'criterion_completed', criterionId, message: row.rationale, timestamp: stamp() });
-        }, criterionId);
-      }
-      const builtChart = chart.build();
+        },
+      });
       const executor = new FlowChartExecutor(builtChart);
       executor.enableNarrative();
+      executor.attachFlowRecorder({ id: 'assessment-live-stage-events', onStageExecuted: event => {
+        if (event.traversalContext?.stageId === INITIALIZE_STAGE_ID) emit({ type: 'stage_completed', stageId: INITIALIZE_STAGE_ID, message: 'Initialized evaluation state with the already captured source digest.', timestamp: stamp() });
+      } });
       executor.attachScopeRecorder(metrics());
       await executor.run({ input: { projectPath: subject.path, criterionIds: selected } });
       const snapshot = executor.getSnapshot();
@@ -366,7 +391,7 @@ export class AssessmentEngine {
       emit({ type: 'run_completed', message: assessment.status === 'awaiting_review' ? 'Automated checks completed. Required expert review is pending.' : 'Assessment completed.', timestamp: stamp() });
       return structuredClone(assessment);
     } catch (error) {
-      if (run) { run.status = 'interrupted'; run.completedAt = stamp(); run.limitations.push(`Execution interrupted: ${plainError(error)}`); this.save(run); }
+      if (run) { run.status = 'interrupted'; run.completedAt = stamp(); run.limitations.push(`Execution interrupted: ${plainError(error)}`); emit({ type: 'run_interrupted', message: `Assessment interrupted: ${plainError(error)}`, timestamp: stamp() }); }
       throw error;
     } finally { this.active = false; }
   }

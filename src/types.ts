@@ -106,8 +106,9 @@ export interface ReviewRecord {
   evidenceIds: string[];
 }
 export interface RunEvent {
-  type: 'run_started' | 'criterion_started' | 'criterion_completed' | 'run_completed' | 'run_interrupted';
+  type: 'collection_started' | 'collection_completed' | 'run_started' | 'stage_started' | 'stage_completed' | 'criterion_started' | 'criterion_completed' | 'run_completed' | 'run_interrupted';
   criterionId?: string;
+  stageId?: string;
   message: string;
   timestamp: string;
 }
@@ -136,14 +137,29 @@ export type RunSummary = Pick<AssessmentRun, 'id' | 'status' | 'startedAt' | 'co
   counts: Record<CriterionStatus, number>;
   template?: { id: string; name: string; version: number; policyDigest: string };
 };
-export interface RunInput {
-  projectPath: string;
+export interface FlowSelection {
   criterionIds?: string[];
   templateId?: string;
   templateVersion?: number;
   networkMode?: 'offline' | 'online';
-  onEvent?: (event: RunEvent) => void;
 }
+export interface FlowPreviewInput extends FlowSelection {
+  draft?: unknown;
+}
+export interface FlowPreview {
+  structure: unknown;
+  criteria: TemplateCriterion[];
+  template: TemplateVersion;
+  networkMode: 'offline' | 'online';
+}
+export interface RunInput extends FlowSelection {
+  projectPath: string;
+  onEvent?: (event: RunEvent, runId: string | null) => void;
+}
+export type RunStreamPacket =
+  | { type: 'event'; runId: string | null; event: RunEvent; result?: CriterionResult }
+  | { type: 'result'; run: AssessmentRun }
+  | { type: 'error'; runId: string | null; error: string; status: number };
 export interface ReviewInput {
   runId: string;
   criterionId: string;

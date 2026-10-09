@@ -16,6 +16,7 @@ import type { AssessmentRun, CriterionStatus, EvidenceRecord } from '../src/type
 import '@xyflow/react/dist/style.css';
 import './replay.css';
 import { measuredTimelineSteps } from './replay-timing.ts';
+export { mountWorkspace } from './workspace.tsx';
 
 type ReplayWorkflow = {
   kind: 'replay';

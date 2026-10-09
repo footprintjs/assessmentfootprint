@@ -10,6 +10,7 @@ const state = {
   viewRequest: 0, flow: null, flowHandle: null, flowMounting: null, flowRequest: 0, flowTimer: null, flowSelected: '_freeze-inputs',
   flowEditing: false, flowEditorIndex: null, flowMode: 'draft', flowEvents: [], flowResults: [], flowRun: null, flowValid: false,
   assessmentStep: 'project', flowPane: 'chart',
+  recordedNavigationRequest: 0,
   replayRequest: 0, replayAbort: null, replayUnmount: null, replayOpenRunId: null,
 };
 let replayModulePromise = null;
@@ -98,6 +99,7 @@ function setView(view, focus = false) {
   if (view === 'templates' && state.flowEditing) leaveFlowDraft(false);
   state.view = view;
   document.body.classList.toggle('assessment-active', view === 'assessment');
+  document.body.classList.toggle('results-active', view === 'run');
   document.querySelectorAll('.view').forEach(element => { element.hidden = element.id !== `${view}-view`; });
   document.querySelectorAll('.nav-button').forEach(element => {
     const active = element.dataset.view === view;
@@ -105,7 +107,8 @@ function setView(view, focus = false) {
     if (active) element.setAttribute('aria-current', 'page'); else element.removeAttribute('aria-current');
   });
   $('#view-label').textContent = viewLabels[view] || view;
-  if (view === 'assessment') { renderAssessmentSteps(); updateFlowGraph(); }
+  if (view === 'assessment' || view === 'run') renderAssessmentSteps();
+  if (view === 'assessment') updateFlowGraph();
   if (focus) $('#main').focus({ preventScroll: true });
 }
 
@@ -116,26 +119,39 @@ const assessmentSteps = {
 };
 
 function renderAssessmentSteps() {
-  const locked = state.flowEditing || state.flowMode !== 'draft';
-  if (locked) state.assessmentStep = 'flow';
-  const step = state.assessmentStep;
-  $('#assessment-view').dataset.step = step;
-  for (const panel of document.querySelectorAll('[data-assessment-panel]')) panel.hidden = panel.dataset.assessmentPanel !== step;
+  const showingResults = state.view === 'run';
+  // A report is tied to the selected saved run. A fresh draft must not inherit
+  // the last report merely because state.run is still available in history.
+  const contextRun = showingResults ? state.run : state.flowRun;
+  const locked = showingResults || state.flowEditing || state.flowMode !== 'draft';
+  if (!showingResults && locked) state.assessmentStep = 'flow';
+  const step = showingResults ? 'results' : state.assessmentStep;
+  const nav = $('#assessment-step-nav');
+  if (showingResults && nav.parentElement !== $('#run-view')) $('#run-view').prepend(nav);
+  else if (state.view === 'assessment' && nav.parentElement !== $('#assessment-view')) $('#assessment-view').insertBefore(nav, $('.assessment-pages'));
+  $('#assessment-view').dataset.step = state.assessmentStep;
+  for (const panel of document.querySelectorAll('[data-assessment-panel]')) panel.hidden = panel.dataset.assessmentPanel !== state.assessmentStep;
   for (const control of document.querySelectorAll('[data-step-target]')) {
     const current = control.dataset.stepTarget === step;
     control.classList.toggle('active', current);
     if (current) control.setAttribute('aria-current', 'step'); else control.removeAttribute('aria-current');
-    control.disabled = locked && control.dataset.stepTarget !== 'flow';
-    control.title = control.disabled ? 'Use New assessment or Leave draft to change the setup.' : '';
+    const target = control.dataset.stepTarget;
+    control.disabled = target === 'results' ? !contextRun || (!showingResults && (state.submitting || state.flowEditing))
+      : target === 'flow' ? showingResults && (!contextRun || state.submitting)
+      : locked;
+    control.title = !control.disabled ? '' : target === 'results' ? 'Run this assessment to see its results and recorded replay.'
+      : target === 'flow' ? 'Finish the active assessment before opening another recorded flow.'
+      : 'Use New assessment or Leave draft to change the setup.';
   }
-  $('#assessment-step-title').textContent = assessmentSteps[step][0];
-  $('#assessment-step-description').textContent = assessmentSteps[step][1];
-  const project = state.flowRun?.subject || state.project;
+  $('#assessment-step-title').textContent = assessmentSteps[state.assessmentStep][0];
+  $('#assessment-step-description').textContent = assessmentSteps[state.assessmentStep][1];
+  const project = contextRun?.subject || state.project;
   const source = state.sourceKind === 'local' ? 'Local folder' : state.sourceKind === 'github' ? 'GitHub repository' : 'npm package';
   $('#step-project-summary').textContent = project?.name || source;
-  const template = state.flowRun?.template || state.assessmentTemplate;
-  $('#step-method-summary').textContent = state.flowEditing ? 'Unpublished draft' : template ? capturedPolicyLabel(template) : 'One-off checks';
-  $('#step-flow-summary').textContent = state.flowMode === 'running' ? 'Running' : state.flowMode !== 'draft' ? 'Recorded evaluation' : state.flowEditing ? 'Editing draft' : 'Configure and run';
+  const template = contextRun ? contextRun.template || contextRun.framework : state.assessmentTemplate;
+  $('#step-method-summary').textContent = !showingResults && state.flowEditing ? 'Unpublished draft' : template ? capturedPolicyLabel(template) : 'One-off checks';
+  $('#step-flow-summary').textContent = showingResults ? 'Inspect recorded flow' : state.flowMode === 'running' ? 'Running' : state.flowMode !== 'draft' ? 'Recorded evaluation' : state.flowEditing ? 'Editing draft' : 'Configure and run';
+  $('#step-results-summary').textContent = contextRun ? contextRun.status === 'running' ? 'Results so far' : 'Findings & replay' : 'After assessment';
   const busy = state.submitting || state.inspecting || state.sourceImporting;
   $('#project-next').disabled = locked || !state.ready || busy || !projectSourceReady();
   $('#project-next').textContent = state.inspecting ? 'Inspecting project…' : 'Continue to Method →';
@@ -143,6 +159,15 @@ function renderAssessmentSteps() {
 }
 
 function setAssessmentStep(step, focus = true) {
+  if (step === 'results') {
+    if (state.view === 'run') state.recordedNavigationRequest += 1;
+    if (state.view !== 'run' && state.flowRun && !state.submitting && !state.flowEditing) openFlowReport();
+    return;
+  }
+  if (state.view === 'run') {
+    if (step === 'flow' && state.run && !state.submitting) showRunFlow(state.run);
+    return;
+  }
   if (!Object.hasOwn(assessmentSteps, step)) return;
   if ((state.flowEditing || state.flowMode !== 'draft') && step !== 'flow') return;
   state.assessmentStep = step;
@@ -516,14 +541,31 @@ async function startRun() {
 }
 
 async function loadRun(id) {
+  const request = ++state.recordedNavigationRequest;
+  const viewGeneration = state.viewRequest;
   clearNotice();
   try {
-    state.run = await api(`/api/runs/${encodeURIComponent(id)}`);
-    if (state.flowRun?.id === id) { state.flowRun = state.run; state.flowEvents = state.run.events; state.flowResults = state.run.results; state.flowMode = state.run.status === 'running' ? 'running' : state.run.status === 'interrupted' ? 'interrupted' : 'complete'; updateFlowActions(); }
+    const loaded = await api(`/api/runs/${encodeURIComponent(id)}`);
+    if (request !== state.recordedNavigationRequest || viewGeneration !== state.viewRequest) return;
+    const run = newestRunContext(loaded);
+    state.run = run;
+    syncRecordedFlow(run);
     renderRun();
     setView('run', true);
     if (state.run.status === 'running' && !state.submitting) showNotice('This assessment is still running. Refresh its findings to see recorded progress.');
-  } catch (error) { showNotice(error.message, true); }
+  } catch (error) { if (request === state.recordedNavigationRequest && viewGeneration === state.viewRequest) showNotice(error.message, true); }
+}
+
+function newestRunContext(run) {
+  return [state.run, state.flowRun].reduce((latest, candidate) => candidate?.id === run.id && (candidate.revision ?? 0) > (latest.revision ?? 0) ? candidate : latest, run);
+}
+
+function syncRecordedFlow(run) {
+  run = newestRunContext(run);
+  if (state.flowRun?.id !== run.id) return;
+  state.flowRun = run; state.flowEvents = run.events; state.flowResults = run.results;
+  state.flowMode = run.status === 'running' ? 'running' : run.status === 'interrupted' ? 'interrupted' : 'complete';
+  updateFlowActions(); updateFlowGraph(); renderFlowInspector();
 }
 
 function metadata(label, value, wide = false, mono = false) {
@@ -542,7 +584,7 @@ function renderRun() {
   const intro = node('header', 'page-intro run-intro');
   const title = node('div');
   const oneOffPolicy = isOneOffPolicy(run.template || run.framework);
-  append(title, node('div', 'eyebrow', 'ASSESSMENT FINDINGS'), node('h1', '', run.subject.name), node('p', '', run.subject.path));
+  append(title, node('div', 'eyebrow', 'STEP 4 / RESULTS'), node('h1', '', run.subject.name), node('p', '', run.subject.path));
   if (run.template) title.append(node('div', 'run-template-caption', oneOffPolicy ? capturedPolicyLabel(run.template) : `${run.template.name} · published version ${run.template.version}`));
   const tags = node('div', 'intro-tags');
   append(tags, badge(run.status), node('span', 'tag', 'Self-assessment'), node('span', 'tag muted', run.networkMode === 'online' ? 'Public lookups allowed' : 'Offline run'));
@@ -555,7 +597,7 @@ function renderRun() {
     if (source.selectedInputs === 'changed') title.append(node('p', 'run-source-edit-note', 'Selected inputs changed locally after download. Findings use the captured local files; the pin identifies their downloaded origin.'));
   }
   const actions = node('div', 'run-actions');
-  append(actions, button('View recorded flow', 'button secondary small', () => showRunFlow(run)), button('Refresh', 'button secondary small', () => loadRun(run.id)), button('Export HTML', 'button secondary small', event => downloadExport('html', event.currentTarget)), button('Export JSON', 'button secondary small', event => downloadExport('json', event.currentTarget)));
+  append(actions, button('Replay what happened', 'button primary small', () => revealRecordedReplay()), button('View recorded flow', 'button secondary small', () => showRunFlow(run)), button('Refresh', 'button secondary small', () => loadRun(run.id)), button('Export HTML', 'button secondary small', event => downloadExport('html', event.currentTarget)), button('Export JSON', 'button secondary small', event => downloadExport('json', event.currentTarget)));
   append(intro, title, actions);
   const counts = Object.fromEntries(Object.keys(statusLabels).filter(key => ['satisfied', 'not_satisfied', 'insufficient_evidence', 'not_applicable', 'evaluation_error'].includes(key)).map(key => [key, 0]));
   run.results.forEach(result => { if (result.status in counts) counts[result.status] += 1; });
@@ -627,6 +669,7 @@ function renderRun() {
     limitations.append(list);
     content.append(limitations);
   }
+  if (state.view === 'run') renderAssessmentSteps();
 }
 
 function disposeReplay() {
@@ -658,6 +701,14 @@ function loadReplayStyles() {
 function loadReplayModule() {
   if (!replayModulePromise) replayModulePromise = import('/assets/replay.js').catch(error => { replayModulePromise = null; throw error; });
   return replayModulePromise;
+}
+
+function revealRecordedReplay() {
+  const panel = $('#recorded-replay-panel');
+  if (!panel || !state.run || state.view !== 'run') return;
+  panel.open = true;
+  $('summary', panel).focus({ preventScroll: true });
+  panel.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
 }
 
 function createReplayPanel(run) {
@@ -855,11 +906,13 @@ function renderReviewForm(run, criterion, reviews) {
     submit.disabled = true; submit.textContent = 'Saving review…';
     clearNotice();
     try {
-      state.run = await api(`/api/runs/${encodeURIComponent(run.id)}/reviews`, { method: 'POST', body: JSON.stringify({ criterionId: criterion.id, reviewer: reviewer.value.trim(), decision: decision.value, rationale: rationale.value.trim() }) });
-      renderRun();
+      const reviewedRun = newestRunContext(await api(`/api/runs/${encodeURIComponent(run.id)}/reviews`, { method: 'POST', body: JSON.stringify({ criterionId: criterion.id, reviewer: reviewer.value.trim(), decision: decision.value, rationale: rationale.value.trim() }) }));
+      syncRecordedFlow(reviewedRun);
+      if (state.run?.id === run.id) state.run = reviewedRun;
+      if (state.view === 'run' && state.run?.id === run.id) renderRun();
       await refreshHistory();
-      showNotice('Review recorded with reviewer attribution and rationale.');
-    } catch (error) { showNotice(error.message, true); submit.disabled = false; submit.textContent = 'Record review'; }
+      if (state.view === 'run' && state.run?.id === run.id) showNotice('Review recorded with reviewer attribution and rationale.');
+    } catch (error) { showNotice(`Review for ${run.subject.name} (${run.id.slice(0, 8)}) was not saved. ${error.message}`, true); submit.disabled = false; submit.textContent = 'Record review'; }
     finally { state.reviewBusy = false; }
   });
   return form;
@@ -1658,23 +1711,26 @@ async function streamAssessment(input) {
 
 async function showRunFlow(run) {
   if (state.submitting) { showNotice('The active assessment is still running.'); return; }
+  const navigation = ++state.recordedNavigationRequest;
   const request = ++state.flowRequest;
   const viewGeneration = state.viewRequest;
   try {
     const workflow = await api(`/api/runs/${encodeURIComponent(run.id)}/workflow`);
-    if (state.submitting || request !== state.flowRequest || state.viewRequest !== viewGeneration) return;
+    if (state.submitting || navigation !== state.recordedNavigationRequest || request !== state.flowRequest || state.viewRequest !== viewGeneration) return;
+    run = newestRunContext(run);
     if (workflow.kind !== 'replay') { state.run = run; state.replayOpenRunId = run.id; renderRun(); setView('run', true); showNotice(workflow.note || 'This older run has no recorded chart. Its original findings remain available.'); return; }
     leaveFlowDraft(false);
     state.flowRequest += 1; clearTimeout(state.flowTimer);
+    const selected = state.flowRun?.id === run.id ? state.flowSelected : '_freeze-inputs';
     state.flow = { structure: workflow.recording.structure, criteria: run.template?.criteria || run.criteria, template: run.template, networkMode: run.networkMode };
     state.flowRun = run; state.flowEvents = run.events; state.flowResults = run.results;
     state.flowMode = run.status === 'interrupted' ? 'interrupted' : run.status === 'running' ? 'running' : 'complete';
-    state.flowSelected = '_freeze-inputs';
+    state.flowSelected = selected === '_freeze-inputs' || state.flow.criteria.some(criterion => criterion.id === selected) ? selected : '_freeze-inputs';
     state.assessmentStep = 'flow';
     setFlowPane('chart');
     $('#flow-status').textContent = `Recorded chart · ${run.status === 'awaiting_review' ? 'automation complete; human review pending' : statusLabels[run.status]} · read-only`;
     setView('assessment', true); updateFlowActions(); renderFlowInspector(); renderProgress(run);
-  } catch (error) { showNotice(`The recorded chart could not be opened. ${error.message}`, true); }
+  } catch (error) { if (navigation === state.recordedNavigationRequest && request === state.flowRequest && state.viewRequest === viewGeneration) showNotice(`The recorded chart could not be opened. ${error.message}`, true); }
 }
 
 function openFlowReport(replay = false) {

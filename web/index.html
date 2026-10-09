@@ -44,10 +44,11 @@
           <div><div class="eyebrow">ASSESSMENT WORKSPACE</div><h1 id="assessment-step-title" tabindex="-1">Choose your project</h1><p id="assessment-step-description">Select a local folder, a GitHub repository, or an npm package.</p></div>
           <span id="flow-mode" class="tag">Configure</span>
         </header>
-        <nav class="assessment-steps" aria-label="Assessment steps">
+        <nav id="assessment-step-nav" class="assessment-steps" aria-label="Assessment steps">
           <button id="step-project" type="button" class="assessment-step-button active" data-step-target="project" aria-current="step" aria-controls="project-step"><span class="assessment-step-number">01</span><span class="assessment-step-copy"><strong>Project</strong><small id="step-project-summary">Choose the source</small></span></button>
           <button id="step-method" type="button" class="assessment-step-button" data-step-target="method" aria-controls="method-step"><span class="assessment-step-number">02</span><span class="assessment-step-copy"><strong>Method</strong><small id="step-method-summary">Choose the checks</small></span></button>
           <button id="step-flow" type="button" class="assessment-step-button" data-step-target="flow" aria-controls="flow-step"><span class="assessment-step-number">03</span><span class="assessment-step-copy"><strong>Flow</strong><small id="step-flow-summary">Configure and run</small></span></button>
+          <button id="step-results" type="button" class="assessment-step-button" data-step-target="results" aria-controls="run-view" disabled><span class="assessment-step-number">04</span><span class="assessment-step-copy"><strong>Results</strong><small id="step-results-summary">After assessment</small></span></button>
         </nav>
         <div class="assessment-pages">
           <section id="project-step" class="panel flow-project assessment-step flow-setup" data-assessment-panel="project" aria-labelledby="project-heading"><div class="step-panel-content">

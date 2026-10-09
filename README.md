@@ -8,9 +8,11 @@ Every run is labelled **self-assessment**. Reviewer names are declared locally, 
 
 ## Run from this checkout
 
-Install [Node.js 24 or newer](https://nodejs.org/en/download), then open a terminal in this repository:
+Install [Node.js 24 or newer](https://nodejs.org/en/download), then clone the repository and start the workbench:
 
 ```sh
+git clone https://github.com/footprintjs/assessmentfootprint.git
+cd assessmentfootprint
 npm ci
 npm start -- /absolute/path/to/project
 ```
@@ -35,7 +37,7 @@ npm start -- /absolute/path/to/project --port 4317 --no-open
 
 Use the path syntax appropriate to your platform; quote paths containing spaces. The runtime targets macOS, Linux, and Windows with Node 24+. This does not claim that every platform has been exercised by the local verification run.
 
-This repository is currently `private: true` and unpublished. There is no published npm installation or `npx` launch to rely on. To make the checkout's `assessment` command available on your local PATH, optionally run `npm link` from this repository. Otherwise use the direct commands below.
+The source is available on [GitHub](https://github.com/footprintjs/assessmentfootprint). The npm package remains unpublished; `private: true` in `package.json` prevents accidental npm publishing and does not control GitHub visibility. There is no published npm installation or `npx` launch to rely on. To make the checkout's `assessment` command available on your local PATH, optionally run `npm link` from this repository. Otherwise use the direct commands below.
 
 ## CLI
 

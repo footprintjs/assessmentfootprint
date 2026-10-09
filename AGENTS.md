@@ -1,6 +1,6 @@
 # AssessmentFootprint agent instructions
 
-AssessmentFootprint is a local Node 24+ application, currently private and unpublished. Work in this repository only unless the user requests changes elsewhere. Existing FootprintJS ecosystem repositories are separate dependencies, not an invitation to edit them.
+AssessmentFootprint is a local Node 24+ application distributed as source on GitHub. Its npm package remains unpublished (`private: true` prevents accidental npm publishing). Work in this repository only unless the user requests changes elsewhere. Existing FootprintJS ecosystem repositories are separate dependencies, not an invitation to edit them.
 
 For a request to customize this installed application for a user’s purpose, read `skills/customize-assessmentfootprint/SKILL.md` and load its implementation map if source changes are needed. `docs/agent-handoff.md` supplies portable prompts. Prefer supported template configuration and preserve the shared flow/results/replay UI. These instructions do not imply a plugin SDK or permission to change unrelated projects.
 

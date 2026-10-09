@@ -22,7 +22,7 @@ Replay reads the retained artifact after byte-hash and run/policy/source identit
 
 Users can install this repository locally and retain its ready-made Project / Method / Flow / Results interface, findings, human review, and saved replay. Versioned templates customize criteria, configured input paths, supported rules, and review requirements within the current assessment engine. The same chart builder, frozen inputs and method definitions, and real execution recordings continue to support those customized assessments.
 
-This is currently a private, unpublished application with a linear chart and software-assessment semantics. An extensible framework is a future direction; custom collectors, new rule forms, or changes to the assessed domain currently require source modifications. There is no current plugin SDK. For guidance on customizing this app while preserving its evidence, finding, review, and replay contracts, see the accompanying [customize-assessmentfootprint skill](../skills/customize-assessmentfootprint/SKILL.md).
+This is a source-distributed application with a linear chart and software-assessment semantics; its npm package remains unpublished. An extensible framework is a future direction; custom collectors, new rule forms, or changes to the assessed domain currently require source modifications. There is no current plugin SDK. For guidance on customizing this app while preserving its evidence, finding, review, and replay contracts, see the accompanying [customize-assessmentfootprint skill](../skills/customize-assessmentfootprint/SKILL.md).
 
 ## Optional integrations
 

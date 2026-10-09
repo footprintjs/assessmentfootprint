@@ -4,7 +4,7 @@ All paths below are relative to the AssessmentFootprint reference checkout. Loca
 
 ## Reference baseline
 
-The source inspected for this guide is AssessmentFootprint `0.3.0`, based on commit `8c15651` (the guide itself is added later). Its manifest is private. It is not a published `npx` launcher or a generic engine package for importing into another app.
+The source inspected for this guide is AssessmentFootprint `0.3.0`, based on commit `8c15651` (the guide itself is added later). Its manifest uses `private: true` to prevent accidental npm publishing; that flag does not control GitHub visibility. It is not a published `npx` launcher or a generic engine package for importing into another app.
 
 The checked-in dependency set uses Node 24+, FootprintJS `9.44.1`, Explainable UI `0.38.0`, React/ReactDOM `19.2.5`, and React Flow `12.10.2`. These are reference versions, not a recommendation to upgrade or proof of compatibility with later releases. Inspect the target's installed packages before adapting calls.
 

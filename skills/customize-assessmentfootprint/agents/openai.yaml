@@ -1,0 +1,4 @@
+interface:
+  display_name: "Customize AssessmentFootprint"
+  short_description: "Adapt this workbench while keeping its flow UI"
+  default_prompt: "Use $customize-assessmentfootprint to adapt my installed workbench to my checks and review process while retaining its existing flow, results, and replay UI."

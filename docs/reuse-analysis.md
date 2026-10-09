@@ -1,27 +1,39 @@
 # Reuse analysis
 
-The first implementation reuses the part of the FootprintJS ecosystem that fits a deterministic local assessment: the execution recorder. It keeps assessment-domain evidence, findings, review history, and persistence in this repository, so a domain finding is not forced into an agent-specific concept.
+AssessmentFootprint reuses FootprintJS for its evaluation chart and execution recorder, and Explainable UI for the browser chart and saved replay. Assessment-domain evidence, findings, review history, and persistence remain in this repository.
 
 ## Used now: FootprintJS
 
-`package.json` pins published package `footprintjs` to `9.44.1`. The core imports `flowChart` and `FlowChartExecutor` from the main public export. It creates an input-digest stage, adds an asynchronous stage for each selected criterion, enables narrative capture, and executes the chart. The resulting workflow evidence includes the real commit log and write provenance.
+`package.json` pins published package `footprintjs` to `9.44.1`. The shared [chart builder](../src/chart.ts) imports `flowChart`; the [core](../src/core.ts) executes that chart through `FlowChartExecutor`. The same definition supplies the draft preview and the actual execution graph: an initialization stage records the already captured input digest, followed by an asynchronous stage for each selected criterion. The retained artifact contains the full runtime snapshot, build-time structure, narrative entries, and metrics captured during traversal.
 
-This gives the workbench a replayable account of how its own evaluation state changed without adding an LLM runtime. It does not independently validate the external evidence or prove that a criterion was well chosen. File snapshots/hashes, scanner diagnostics, and criterion limitations remain AssessmentFootprint's responsibility. The first browser displays retained workflow evidence as an original artifact; it does not include an animated Lens replay surface.
+This gives the workbench a replayable account of how its own evaluation state changed without adding an LLM runtime. It does not independently validate the external evidence, prove that a criterion was well chosen, or establish complete file-to-decision causal proof. File snapshots/hashes, scanner diagnostics, and criterion limitations remain AssessmentFootprint's responsibility. The recording covers automated evaluation after input capture; human review remains a separate attributed judgment and does not rewrite it.
 
 FootprintJS also exports `decide` for rule/operand evidence and tracing helpers under `footprintjs/trace`. Those are potential additions when more expressive deterministic policies justify them; the initial file checks are ordinary criterion evaluators rather than fabricated `decide` branches.
 
 Primary project: [FootprintJS](https://github.com/footprintjs/footPrint).
 
+## Used now: Explainable UI
+
+`package.json` pins `footprint-explainable-ui` to `0.38.0` and includes React, React DOM, and `@xyflow/react`. The [workspace](../client/workspace.tsx) uses `graphFromStructure` to render the builder's real stage IDs and edges. The [replay viewer](../client/replay.tsx) uses `ExplainableProvider`, `useExplainableRun`, and `TracedFlow` to display saved execution state, with the same vertical stage-card style and chart controls. These assets are bundled locally.
+
+Replay reads the retained artifact after byte-hash and run/policy/source identity checks; it never reruns an assessment. Stage completion and criterion satisfaction are separate, and the current reviewed findings remain separate from the recorded automation state. Earlier artifacts without a full recording receive an explicit legacy or unavailable view rather than invented replay frames or timings.
+
+## Customizing this application
+
+Users can install this repository locally and retain its ready-made Project / Method / Flow / Results interface, findings, human review, and saved replay. Versioned templates customize criteria, configured input paths, supported rules, and review requirements within the current assessment engine. The same chart builder, frozen inputs and method definitions, and real execution recordings continue to support those customized assessments.
+
+This is currently a private, unpublished application with a linear chart and software-assessment semantics. An extensible framework is a future direction; custom collectors, new rule forms, or changes to the assessed domain currently require source modifications. There is no current plugin SDK. For guidance on customizing this app while preserving its evidence, finding, review, and replay contracts, see the accompanying [customize-assessmentfootprint skill](../skills/customize-assessmentfootprint/SKILL.md).
+
 ## Optional integrations
 
-| Package | Verified local package | Potential role | Why it is not required in this slice |
+| Package | Local package observed during initial inspection | Potential role | Why it is not required now |
 | --- | --- | --- | --- |
 | AgentFootprint | `agentfootprint` `9.135.1` | A local-model reviewer or an assessment tool exposed through `defineTool` / `runbookAsTool`, with `coverage`, `absent`, and `describedResult` envelopes. | Current criteria are deterministic or human-reviewed. A model runtime adds no necessary capability. |
-| AgentFootprint Lens | `agentfootprint-lens` `0.72.1` | Recorded agent replay using `lensRecorder`, `observeRecording`, and `<Lens>`, plus findings/coverage/proof views. | Its recording contract expects agent events; the current deterministic trace does not manufacture those. The existing browser also has no React/xyflow dependency. |
+| AgentFootprint Lens | `agentfootprint-lens` `0.72.1` | Recorded agent replay using `lensRecorder`, `observeRecording`, and `<Lens>`, plus findings/coverage/proof views. | An actual AgentFootprint integration could supply the agent recording it expects. Explainable UI already displays the current deterministic workflow; adding Lens does not justify manufacturing agent events. |
 | HCIFootprint | `hcifootprint` `2.6.0` | Typed action definitions and journey/session records for an agent-operable review interface. | Displaying findings and submitting a human review does not yet require a declared agent action graph. |
-| VizFootprint | `vizfootprint` `0.1.0`, private | `buildDashboard`, interaction sessions, branching exploration, and provenance-aware chart actions. | The local workspace package is private and its public repository describes a pre-alpha state. The initial workbench needs a simple results/evidence interface, not a coordinated analysis dashboard. |
+| VizFootprint | `vizfootprint` `0.1.0`, private | `buildDashboard`, interaction sessions, branching exploration, and provenance-aware chart actions. | At the initial inspection, the local package was private and the repository described a pre-alpha state. Its coordinated analysis dashboard is not required for the implemented assessment and replay surfaces. |
 
-These versions describe the focused local repositories inspected during implementation, not promises of compatibility with arbitrary published versions. Existing ecosystem repositories were not modified.
+These optional-package versions are historical observations from the focused local repositories inspected during initial implementation on October 8, 2026. They are not current release claims or promises of compatibility with arbitrary published versions. Existing ecosystem repositories were not modified.
 
 Primary projects: [AgentFootprint](https://github.com/footprintjs/agentfootprint), [Lens](https://github.com/footprintjs/agentfootprint-lens), [HCIFootprint](https://github.com/footprintjs/hcifootprint), [VizFootprint](https://github.com/footprintjs/vizfootprint).
 

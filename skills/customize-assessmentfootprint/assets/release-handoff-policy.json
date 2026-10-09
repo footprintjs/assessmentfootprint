@@ -1,0 +1,27 @@
+{
+  "name": "Release handoff",
+  "description": "Check a declared release schema and obtain a separate human review of handoff guidance.",
+  "networkMode": "offline",
+  "criteria": [
+    {
+      "id": "handoff-schema",
+      "title": "Handoff schema declaration",
+      "description": "The handoff manifest must explicitly declare schema version 1.",
+      "dimension": "Handoff metadata",
+      "evidenceRequirements": ["handoff.json with numeric schemaVersion equal to 1"],
+      "collector": { "toolId": "project-files", "paths": ["handoff.json"] },
+      "evaluation": { "kind": "json-field", "field": ["schemaVersion"], "operator": "equals", "expected": 1 },
+      "requiresReview": false
+    },
+    {
+      "id": "handoff-review",
+      "title": "Handoff guidance review",
+      "description": "A reviewer checks whether the release handoff guidance can be followed.",
+      "dimension": "Human review",
+      "evidenceRequirements": ["Guidance in docs/HANDOFF.md identifies the release owner and the steps to verify the release; a reviewer records a decision and rationale"],
+      "collector": { "toolId": "project-files", "paths": ["docs/HANDOFF.md"] },
+      "evaluation": { "kind": "expert" },
+      "requiresReview": true
+    }
+  ]
+}

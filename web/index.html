@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
-<body>
+<body class="assessment-active">
   <a class="skip-link" href="#main">Skip to workspace</a>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Workspace navigation">
@@ -39,13 +39,18 @@
       </header>
       <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
 
-      <section id="assessment-view" class="view">
+      <section id="assessment-view" class="view" data-step="project">
         <header class="page-intro flow-intro">
-          <div><div class="eyebrow">METHOD / EVIDENCE / REVIEW</div><h1>Assessment workspace</h1><p>Define the method. Follow the checks. Review the evidence.</p></div>
+          <div><div class="eyebrow">ASSESSMENT WORKSPACE</div><h1 id="assessment-step-title" tabindex="-1">Choose your project</h1><p id="assessment-step-description">Select a local folder, a GitHub repository, or an npm package.</p></div>
           <span id="flow-mode" class="tag">Configure</span>
         </header>
-        <div id="flow-setup" class="flow-setup">
-          <section class="panel flow-project" aria-labelledby="project-heading">
+        <nav class="assessment-steps" aria-label="Assessment steps">
+          <button id="step-project" type="button" class="assessment-step-button active" data-step-target="project" aria-current="step" aria-controls="project-step"><span class="assessment-step-number">01</span><span class="assessment-step-copy"><strong>Project</strong><small id="step-project-summary">Choose the source</small></span></button>
+          <button id="step-method" type="button" class="assessment-step-button" data-step-target="method" aria-controls="method-step"><span class="assessment-step-number">02</span><span class="assessment-step-copy"><strong>Method</strong><small id="step-method-summary">Choose the checks</small></span></button>
+          <button id="step-flow" type="button" class="assessment-step-button" data-step-target="flow" aria-controls="flow-step"><span class="assessment-step-number">03</span><span class="assessment-step-copy"><strong>Flow</strong><small id="step-flow-summary">Configure and run</small></span></button>
+        </nav>
+        <div class="assessment-pages">
+          <section id="project-step" class="panel flow-project assessment-step flow-setup" data-assessment-panel="project" aria-labelledby="project-heading"><div class="step-panel-content">
             <div class="project-heading-row"><h2 id="project-heading" data-section="01">Project</h2><div class="source-choice"><label class="sr-only" for="project-source-kind">Project source</label><select id="project-source-kind" disabled><option value="local">Local folder</option><option value="github">GitHub repository</option><option value="npm">npm package</option></select></div></div>
             <form id="remote-source-form" hidden>
               <label id="remote-source-label" class="field-label" for="remote-source">GitHub repository URL</label>
@@ -55,24 +60,29 @@
             </form>
             <div id="project-folder-field"><form id="project-form"><label id="project-path-label" class="field-label" for="project-path">Local project folder</label><div class="input-action"><input id="project-path" name="projectPath" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/your/project" required><button id="inspect-button" type="submit" class="button secondary">Inspect</button></div></form></div>
             <div id="project-preview" class="project-preview" hidden></div>
+            </div><footer class="step-actions"><p>Inspect the source before choosing your assessment method.</p><button id="project-next" type="button" class="button primary" disabled>Continue to Method →</button></footer>
           </section>
-          <section class="panel flow-method" aria-labelledby="criteria-heading">
+          <section id="method-step" class="panel flow-method assessment-step flow-setup" data-assessment-panel="method" aria-labelledby="criteria-heading" hidden><div class="step-panel-content">
             <h2 id="criteria-heading" data-section="02">Assessment method</h2>
             <div class="assessment-template-fields"><div><label class="field-label" for="assessment-template">Template</label><select id="assessment-template" disabled><option value="">One-off checks</option></select></div><div id="assessment-version-field" hidden><label class="field-label" for="assessment-template-version">Version</label><select id="assessment-template-version"></select></div></div>
-            <details id="flow-options"><summary>Scope, network &amp; check selection</summary><div id="assessment-template-info" class="template-selection-info" hidden></div><div id="criterion-list" class="criterion-list"></div><button id="restore-defaults" type="button" class="text-button" disabled>Use defaults</button><p id="network-description" class="field-help">Public advisory lookups are optional.</p><fieldset class="network-options"><legend>Network access</legend><label class="network-option"><input type="radio" name="network-mode" value="offline" checked><span><strong>Offline</strong><small>Local files and installed tools.</small></span></label><label class="network-option"><input type="radio" name="network-mode" value="online"><span><strong>Allow public lookups</strong><small>Permit supported public advisory downloads.</small></span></label></fieldset></details>
+            <details id="flow-options" open><summary>Scope, network &amp; check selection</summary><div id="assessment-template-info" class="template-selection-info" hidden></div><div id="criterion-list" class="criterion-list"></div><button id="restore-defaults" type="button" class="text-button" disabled>Use defaults</button><p id="network-description" class="field-help">Public advisory lookups are optional.</p><fieldset class="network-options"><legend>Network access</legend><label class="network-option"><input type="radio" name="network-mode" value="offline" checked><span><strong>Offline</strong><small>Local files and installed tools.</small></span></label><label class="network-option"><input type="radio" name="network-mode" value="online"><span><strong>Allow public lookups</strong><small>Permit supported public advisory downloads.</small></span></label></fieldset></details>
+            </div><footer class="step-actions"><button type="button" class="button secondary" data-step-target="project">← Project</button><button id="method-next" type="button" class="button primary" disabled>Continue to Flow →</button></footer>
           </section>
-        </div>
+          <section id="flow-step" class="assessment-step flow-step" data-assessment-panel="flow" aria-label="Evaluation flow" data-pane="chart" hidden>
         <div class="flow-toolbar"><div><strong id="flow-title">Evaluation chart</strong><p id="flow-status" role="status" aria-live="polite">Building the chart from the selected assessment…</p><span id="selection-count" class="sr-only">No criteria selected</span></div><div class="flow-actions"><button id="flow-edit" type="button" class="button secondary" disabled>Edit flow</button><button id="flow-leave-draft" type="button" class="button secondary" hidden>Leave draft</button><button id="flow-new-draft" type="button" class="button secondary" hidden>New assessment</button><button id="flow-report" type="button" class="button secondary" hidden>Open report ↗</button><button id="run-button" type="button" class="button primary" disabled>Run assessment ↗</button></div></div>
+        <div class="flow-pane-switch" aria-label="Flow view"><button id="flow-chart-tab" type="button" aria-controls="flow-graph" aria-pressed="true">Chart</button><button id="flow-details-tab" type="button" aria-controls="flow-inspector" aria-pressed="false">Selected stage</button></div>
         <div class="flow-workbench">
           <section id="flow-graph" class="flow-graph-mount" aria-label="Assessment flowchart"><p class="empty-copy">Loading the connected chart…</p></section>
-          <aside id="flow-inspector" class="flow-inspector" aria-label="Stage configuration">
-            <div class="compact-heading flow-back-nav"><button id="back-to-flow" type="button" class="text-button">↑ Back to flow</button></div>
+          <aside id="flow-inspector" class="flow-inspector" aria-label="Stage configuration" tabindex="-1">
+            <div class="compact-heading flow-back-nav"><button id="back-to-flow" type="button" class="text-button">← Back to chart</button></div>
             <div id="flow-stage-details"></div>
             <div id="flow-stage-editor" class="template-builder" hidden></div>
             <section class="flow-readiness" aria-labelledby="readiness-heading"><div class="compact-heading"><h2 id="readiness-heading">Tool readiness</h2><button type="button" data-view="tools" class="text-button">Setup ↗</button></div><div id="tool-readiness"></div></section>
+            <details id="live-progress" class="panel flow-activity" hidden><summary>Recorded activity <span id="progress-state" class="badge running">Running</span></summary><p id="progress-project" class="progress-project"></p><div id="progress-events" class="event-list" aria-live="polite"></div><button id="open-live-run" type="button" class="text-button" hidden>Open this run ↗</button></details>
           </aside>
         </div>
-        <section id="live-progress" class="panel flow-activity" hidden aria-labelledby="progress-heading"><div class="compact-heading"><h2 id="progress-heading">Recorded activity</h2><span id="progress-state" class="badge running">Running</span></div><p id="progress-project" class="progress-project"></p><div id="progress-events" class="event-list" aria-live="polite"></div><button id="open-live-run" type="button" class="text-button" hidden>Open this run ↗</button></section>
+          </section>
+        </div>
       </section>
 
       <section id="templates-view" class="view" hidden>

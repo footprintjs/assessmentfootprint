@@ -9,6 +9,7 @@ const state = {
   templateSelectionLoading: false, editor: null, editorRequest: 0, publishing: false,
   viewRequest: 0, flow: null, flowHandle: null, flowMounting: null, flowRequest: 0, flowTimer: null, flowSelected: '_freeze-inputs',
   flowEditing: false, flowEditorIndex: null, flowMode: 'draft', flowEvents: [], flowResults: [], flowRun: null, flowValid: false,
+  assessmentStep: 'project', flowPane: 'chart',
   replayRequest: 0, replayAbort: null, replayUnmount: null, replayOpenRunId: null,
 };
 let replayModulePromise = null;
@@ -96,6 +97,7 @@ function setView(view, focus = false) {
   }
   if (view === 'templates' && state.flowEditing) leaveFlowDraft(false);
   state.view = view;
+  document.body.classList.toggle('assessment-active', view === 'assessment');
   document.querySelectorAll('.view').forEach(element => { element.hidden = element.id !== `${view}-view`; });
   document.querySelectorAll('.nav-button').forEach(element => {
     const active = element.dataset.view === view;
@@ -103,8 +105,70 @@ function setView(view, focus = false) {
     if (active) element.setAttribute('aria-current', 'page'); else element.removeAttribute('aria-current');
   });
   $('#view-label').textContent = viewLabels[view] || view;
-  if (view === 'assessment') updateFlowGraph();
+  if (view === 'assessment') { renderAssessmentSteps(); updateFlowGraph(); }
   if (focus) $('#main').focus({ preventScroll: true });
+}
+
+const assessmentSteps = {
+  project: ['Choose your project', 'Select a local folder, a GitHub repository, or an npm package.'],
+  method: ['Choose your assessment method', 'Review the template, evidence requirements, and network policy.'],
+  flow: ['Assessment flow', 'Select a stage to inspect or configure it, then run the assessment.'],
+};
+
+function renderAssessmentSteps() {
+  const locked = state.flowEditing || state.flowMode !== 'draft';
+  if (locked) state.assessmentStep = 'flow';
+  const step = state.assessmentStep;
+  $('#assessment-view').dataset.step = step;
+  for (const panel of document.querySelectorAll('[data-assessment-panel]')) panel.hidden = panel.dataset.assessmentPanel !== step;
+  for (const control of document.querySelectorAll('[data-step-target]')) {
+    const current = control.dataset.stepTarget === step;
+    control.classList.toggle('active', current);
+    if (current) control.setAttribute('aria-current', 'step'); else control.removeAttribute('aria-current');
+    control.disabled = locked && control.dataset.stepTarget !== 'flow';
+    control.title = control.disabled ? 'Use New assessment or Leave draft to change the setup.' : '';
+  }
+  $('#assessment-step-title').textContent = assessmentSteps[step][0];
+  $('#assessment-step-description').textContent = assessmentSteps[step][1];
+  const project = state.flowRun?.subject || state.project;
+  const source = state.sourceKind === 'local' ? 'Local folder' : state.sourceKind === 'github' ? 'GitHub repository' : 'npm package';
+  $('#step-project-summary').textContent = project?.name || source;
+  const template = state.flowRun?.template || state.assessmentTemplate;
+  $('#step-method-summary').textContent = state.flowEditing ? 'Unpublished draft' : template ? capturedPolicyLabel(template) : 'One-off checks';
+  $('#step-flow-summary').textContent = state.flowMode === 'running' ? 'Running' : state.flowMode !== 'draft' ? 'Recorded evaluation' : state.flowEditing ? 'Editing draft' : 'Configure and run';
+  const busy = state.submitting || state.inspecting || state.sourceImporting;
+  $('#project-next').disabled = locked || !state.ready || busy || !projectSourceReady();
+  $('#project-next').textContent = state.inspecting ? 'Inspecting project…' : 'Continue to Method →';
+  $('#method-next').disabled = locked || !state.ready || busy || state.templateSelectionLoading || !state.selected.size || !state.flowValid;
+}
+
+function setAssessmentStep(step, focus = true) {
+  if (!Object.hasOwn(assessmentSteps, step)) return;
+  if ((state.flowEditing || state.flowMode !== 'draft') && step !== 'flow') return;
+  state.assessmentStep = step;
+  renderAssessmentSteps();
+  if (step === 'flow') updateFlowGraph();
+  if (focus) (step === 'flow' ? $('#step-flow') : $('#assessment-step-title')).focus({ preventScroll: true });
+}
+
+function setFlowPane(pane, focus = false) {
+  state.flowPane = pane === 'details' ? 'details' : 'chart';
+  $('#flow-step').dataset.pane = state.flowPane;
+  $('#flow-chart-tab').setAttribute('aria-pressed', String(state.flowPane === 'chart'));
+  $('#flow-details-tab').setAttribute('aria-pressed', String(state.flowPane === 'details'));
+  if (focus) {
+    const target = state.flowPane === 'details' ? $('#flow-inspector') : $('#flow-graph select') || $('#flow-chart-tab');
+    target.focus({ preventScroll: true });
+  }
+}
+
+async function continueFromProject() {
+  if ($('#project-next').disabled) return;
+  if (state.sourceKind === 'local' && state.project?.path !== $('#project-path').value.trim()) await inspectProject();
+  if (state.assessmentStep === 'project' && state.project && projectSourceReady() && state.project.path === $('#project-path').value.trim()) {
+    clearNotice();
+    setAssessmentStep('method');
+  }
 }
 
 function renderCriteria() {
@@ -411,11 +475,12 @@ function setConfigurationBusy(busy) {
 
 async function startRun() {
   if (state.submitting || state.inspecting || state.sourceImporting || state.templateSelectionLoading || !state.ready) return;
-  if (!projectSourceReady()) { showNotice(state.sourceKind === 'local' ? 'Enter a local project folder.' : 'Fetch the selected source before running its assessment.', true); return; }
-  if (!$('#project-form').reportValidity()) return;
+  if (!projectSourceReady()) { setAssessmentStep('project'); showNotice(state.sourceKind === 'local' ? 'Enter a local project folder.' : 'Fetch the selected source before running its assessment.', true); return; }
+  if (!$('#project-form').checkValidity()) { setAssessmentStep('project'); $('#project-form').reportValidity(); return; }
   if (!state.selected.size) { showNotice('Select at least one criterion.', true); return; }
   if (!state.flowValid || state.flowEditing || state.flowMode !== 'draft') { showNotice('Choose a valid published flow before running.', true); return; }
   clearNotice();
+  setAssessmentStep('flow', false);
   const input = state.assessmentTemplate
     ? { projectPath: $('#project-path').value.trim(), templateId: state.assessmentTemplate.id, templateVersion: state.assessmentTemplate.version }
     : { projectPath: $('#project-path').value.trim(), criterionIds: [...state.selected], networkMode: $('input[name="network-mode"]:checked').value };
@@ -1378,8 +1443,8 @@ function updateFlowActions() {
   $('#flow-new-draft').hidden = !recorded || state.submitting || state.flowMode === 'running';
   $('#flow-report').hidden = !state.flowRun;
   $('#run-button').hidden = recorded;
-  $('#flow-setup').hidden = recorded || state.flowEditing;
   $('.flow-readiness').hidden = recorded || state.flowEditing;
+  renderAssessmentSteps();
 }
 
 function flowSelection() {
@@ -1443,7 +1508,7 @@ function selectFlowStage(id) {
     filterFlowEditor();
   } else renderFlowInspector();
   updateFlowGraph();
-  if (window.matchMedia('(max-width: 900px)').matches) $('#flow-inspector').scrollIntoView({ block: 'start', behavior: 'smooth' });
+  if (window.matchMedia('(max-width: 900px)').matches) setFlowPane('details', true);
 }
 
 function flowConfigureButton(label) {
@@ -1503,6 +1568,7 @@ async function beginFlowEdit() {
   state.editorRequest += 1;
   state.editor = { source: source && !source.builtIn ? source : null, draft, versions, expectedVersion: source && !source.builtIn ? source.version : undefined, readonly: false, dirty: true, origin: source ? `Copied from ${source.name}, version ${source.version}.` : 'Based on the selected one-off checks.' };
   state.flowEditing = true;
+  setFlowPane('details');
   state.flowEditorIndex = selected === '_freeze-inputs' ? null : draft.criteria.findIndex(c => c.id === selected);
   if (state.flowEditorIndex < 0) state.flowEditorIndex = null;
   $('#flow-stage-editor').append($('#template-form'));
@@ -1550,6 +1616,8 @@ function resetFlowDraft() {
   if (state.submitting || state.flowMode === 'running') return;
   state.flowMode = 'draft'; state.flowRun = null; state.flowEvents = []; state.flowResults = []; state.flowSelected = '_freeze-inputs';
   $('#live-progress').hidden = true;
+  state.assessmentStep = 'project';
+  setFlowPane('chart');
   updateFlowActions(); scheduleFlowPreview(); setView('assessment', true);
 }
 
@@ -1602,6 +1670,8 @@ async function showRunFlow(run) {
     state.flowRun = run; state.flowEvents = run.events; state.flowResults = run.results;
     state.flowMode = run.status === 'interrupted' ? 'interrupted' : run.status === 'running' ? 'running' : 'complete';
     state.flowSelected = '_freeze-inputs';
+    state.assessmentStep = 'flow';
+    setFlowPane('chart');
     $('#flow-status').textContent = `Recorded chart · ${run.status === 'awaiting_review' ? 'automation complete; human review pending' : statusLabels[run.status]} · read-only`;
     setView('assessment', true); updateFlowActions(); renderFlowInspector(); renderProgress(run);
   } catch (error) { showNotice(`The recorded chart could not be opened. ${error.message}`, true); }
@@ -1618,7 +1688,15 @@ $('#flow-edit').addEventListener('click', beginFlowEdit);
 $('#flow-leave-draft').addEventListener('click', () => leaveFlowDraft());
 $('#flow-new-draft').addEventListener('click', resetFlowDraft);
 $('#flow-report').addEventListener('click', () => openFlowReport());
-$('#back-to-flow').addEventListener('click', () => $('#flow-graph').scrollIntoView({ block: 'start', behavior: 'smooth' }));
+$('#back-to-flow').addEventListener('click', () => setFlowPane('chart', true));
+$('#flow-chart-tab').addEventListener('click', () => setFlowPane('chart'));
+$('#flow-details-tab').addEventListener('click', () => setFlowPane('details'));
+$('#flow-inspector').addEventListener('keydown', event => {
+  if (event.key === 'Escape' && window.matchMedia('(max-width: 900px)').matches) { event.preventDefault(); setFlowPane('chart', true); }
+});
+document.querySelectorAll('[data-step-target]').forEach(control => control.addEventListener('click', () => setAssessmentStep(control.dataset.stepTarget)));
+$('#project-next').addEventListener('click', continueFromProject);
+$('#method-next').addEventListener('click', () => setAssessmentStep('flow'));
 
 document.querySelectorAll('[data-view]').forEach(element => element.addEventListener('click', async () => {
   const view = element.dataset.view;

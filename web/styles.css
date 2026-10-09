@@ -443,3 +443,133 @@ input[type=text]:read-only { background:#efeee8; color:#5e6873; }
   .metadata-grid { grid-template-columns:1fr; gap:14px; }
   .main-footer { font-size:10px; line-height:1.9; }
 }
+
+/* Focused assessment steps keep the chart inside the available screen. */
+body.assessment-active { overflow:hidden; }
+.assessment-active .app-shell { height:100dvh; min-height:0; overflow:hidden; }
+.assessment-active .sidebar { min-height:0; height:100%; overflow:auto; }
+.assessment-active main { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; padding:0 26px; max-width:none; }
+.assessment-active .topbar { flex:0 0 40px; height:40px; }
+.assessment-active .main-footer { display:none; }
+.assessment-active #notice { flex-shrink:0; max-height:90px; overflow:auto; margin:10px 0 0; padding:10px 14px; }
+#assessment-view { display:flex; flex-direction:column; flex:1; min-height:0; padding-bottom:18px; }
+#assessment-view .flow-intro { flex-shrink:0; margin:0; padding:22px 0 18px; border:0; }
+#assessment-view .flow-intro h1 { font-size:32px; letter-spacing:-.8px; }
+#assessment-view .flow-intro p { margin-top:7px; font-size:12px; }
+#assessment-view .flow-intro .eyebrow { margin-bottom:7px; font-size:9px; }
+#assessment-view[data-step="flow"] .flow-intro { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; }
+.assessment-steps { flex-shrink:0; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); border-bottom:1px solid #bfc3c6; margin-bottom:18px; }
+.assessment-step-button { display:flex; align-items:center; gap:11px; min-width:0; min-height:54px; padding:7px 14px; text-align:left; border:0; border-bottom:3px solid transparent; color:#526271; background:transparent; }
+.assessment-step-button:hover { background:#eae8e0; }
+.assessment-step-button.active { border-bottom-color:#2752ad; background:#edf1f8; color:#162a40; }
+.assessment-step-number { font:12px/1 ui-monospace,monospace; color:#795b37; flex-shrink:0; }
+.assessment-step-button.active .assessment-step-number { color:#2752ad; }
+.assessment-step-copy { display:grid; gap:2px; min-width:0; }
+.assessment-step-copy strong { font-size:13px; }
+.assessment-step-copy small { display:block; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:10px; color:#5c6975; }
+.assessment-pages { display:flex; flex:1; min-height:0; }
+.assessment-step { width:100%; min-width:0; min-height:0; }
+.assessment-step.flow-setup { display:flex; flex-direction:column; align-items:stretch; gap:0; padding:0; max-width:1040px; margin:0 auto; overflow:hidden; }
+.step-panel-content { padding:24px 28px; min-height:0; overflow:auto; overscroll-behavior:contain; flex:1; }
+.flow-project .step-panel-content { flex:0 1 auto; }
+.assessment-step.flow-project { max-width:880px; max-height:100%; align-self:flex-start; }
+.step-actions { padding:15px 24px; border-top:1px solid var(--line); background:#f8f6f0; display:flex; align-items:center; justify-content:space-between; gap:18px; flex-shrink:0; }
+.step-actions p { max-width:390px; font-size:12px; color:#5c6975; }
+.step-actions .button { flex-shrink:0; }
+.flow-method #criterion-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.flow-method .criterion-card { margin:0; }
+.flow-method .criterion-choice { align-items:flex-start; }
+.flow-method .criterion-description { font-size:11px; }
+.flow-method .criterion-id { color:#5d6975; }
+.flow-method .criterion-title-row { flex-wrap:wrap; }
+.flow-method .assessment-template-fields { grid-template-columns:minmax(0,1fr) 145px; }
+.flow-step { display:flex; flex-direction:column; flex:1; }
+#assessment-view[data-step="flow"] .assessment-steps { margin-bottom:0; }
+.flow-step .flow-toolbar { flex-shrink:0; padding:9px 0; min-height:58px; gap:14px; }
+.flow-step .flow-toolbar>div:first-child { padding-left:0; min-width:0; }
+.flow-step .flow-toolbar>div:first-child::before { display:none; }
+.flow-step .flow-toolbar strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:14px; }
+.flow-step .flow-toolbar p { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; font-size:11px; }
+.flow-step .flow-actions { flex-shrink:0; gap:8px; }
+.flow-step .flow-actions .button { padding:9px 13px; min-height:38px; font-size:11px; }
+.flow-step .flow-workbench { flex:1; min-height:0; grid-template-columns:minmax(0,1fr) 310px; align-items:stretch; gap:18px; }
+.flow-step .flow-graph-mount { min-height:0; height:100%; overflow:hidden; }
+.flow-step .flow-graph-mount>.af-workspace { height:100%; min-height:0; }
+.flow-step .af-workspace-toolbar { padding:7px 14px; }
+.flow-step .af-workspace-toolbar label { display:flex; align-items:center; gap:8px; max-width:260px; white-space:nowrap; }
+.flow-step .af-workspace-toolbar select { max-width:200px; }
+.flow-step .af-workspace-toolbar label { gap:2px; }
+.flow-step .af-workspace-toolbar select { min-height:32px; }
+.flow-step .af-workspace-canvas { min-height:0; }
+.flow-step .af-workspace-legend { padding:8px 14px; font-size:10px; }
+.flow-step .af-workspace-scope { padding:7px 14px; font-size:10px; line-height:1.5; }
+.flow-step .flow-inspector { height:100%; min-height:0; max-height:none; overflow:auto; overscroll-behavior:contain; position:static; align-self:stretch; }
+.flow-step .flow-inspector #flow-stage-details { padding:20px; }
+.flow-step .flow-inspector h2 { font-size:17px; }
+.flow-step .flow-inspector h3 { margin-top:18px; }
+.flow-step .flow-inspector-copy { line-height:1.65; font-size:12px; }
+.flow-step .flow-readiness { padding:17px 20px; }
+.flow-step .flow-activity { margin:0; padding:17px 20px; border:0; border-top:1px solid var(--line); border-radius:0; }
+.flow-activity>summary { cursor:pointer; font-size:12px; font-weight:600; }
+.flow-activity>summary .badge { margin-left:8px; font-size:9px; }
+.flow-activity .event-list { max-height:none; }
+.flow-pane-switch { display:none; }
+.flow-step .flow-back-nav { display:none; }
+@media(max-width:1150px) {
+  .assessment-active main { padding:0 20px; }
+  .flow-step .flow-workbench { grid-template-columns:minmax(0,1fr) 280px; gap:14px; }
+}
+@media(max-width:900px) {
+  .flow-step .flow-workbench { display:flex; min-height:0; }
+  .flow-step .flow-graph-mount,.flow-step .flow-inspector { flex:1; width:100%; }
+  .flow-step[data-pane="chart"] .flow-inspector,.flow-step[data-pane="details"] .flow-graph-mount { display:none; }
+  .flow-pane-switch { display:flex; flex-shrink:0; gap:4px; padding:0 0 10px; }
+  .flow-pane-switch button { flex:1; min-height:36px; border:1px solid #c6c5bd; border-radius:3px; color:#4b5d70; font-size:12px; background:#f8f6f0; }
+  .flow-pane-switch button[aria-pressed="true"] { color:#204b9f; background:#e9eef8; border-color:#9aaed0; }
+  .flow-step .flow-back-nav { display:flex; margin:0; padding:12px 20px; background:#f8f6f0; border-bottom:1px solid var(--line); }
+  .flow-method #criterion-list { grid-template-columns:1fr; }
+}
+@media(max-width:680px) {
+  .assessment-active .app-shell { display:grid; grid-template-columns:1fr; grid-template-rows:auto minmax(0,1fr); }
+  .assessment-active .sidebar { padding:12px 14px 0; overflow:visible; }
+  .assessment-active .sidebar .brand { font-size:14px; }
+  .assessment-active .sidebar .brand-mark { width:23px; height:25px; }
+  .assessment-active .sidebar .brand-sub { font-size:14px; }
+  .assessment-active .workspace-label { display:none; }
+  .assessment-active:has(#assessment-view[data-step="flow"]) .topbar { display:none; }
+  .assessment-active .navigation { margin:10px -14px 0; }
+  .assessment-active .nav-button { padding:8px 14px; min-height:34px; font-size:10px; }
+  .assessment-active main { padding:0 14px; }
+  .assessment-active .topbar { flex-basis:40px; height:40px; }
+  .assessment-active .engine-status { font-size:9px; }
+  #assessment-view { padding-bottom:12px; }
+  #assessment-view .flow-intro { padding:16px 0 12px; }
+  #assessment-view .flow-intro h1 { font-size:26px; }
+  #assessment-view .flow-intro p { font-size:11px; line-height:1.5; }
+  #assessment-view .flow-intro .tag { display:none; }
+  .assessment-steps { margin-bottom:12px; }
+  .assessment-step-button { gap:7px; min-height:49px; padding:8px; }
+  .assessment-step-copy strong { font-size:12px; }
+  .assessment-step-copy small { display:none; }
+  .assessment-step-number { font-size:10px; }
+  .step-panel-content { padding:18px 16px; }
+  .step-actions { padding:12px 16px; gap:10px; flex-wrap:wrap; }
+  .step-actions p { font-size:11px; }
+  .step-actions .button { font-size:11px; padding:10px 13px; }
+  .flow-project .step-actions .button { width:100%; }
+  .flow-method .assessment-template-fields { grid-template-columns:1fr; }
+  .flow-project .project-heading-row { gap:9px; }
+  .flow-project .source-choice { width:137px; }
+  .flow-project #remote-source-form .field-help { font-size:11px; }
+  .flow-step .flow-toolbar { padding:10px 0; gap:8px; flex-direction:column; align-items:stretch; }
+  .flow-step .flow-toolbar strong { font-size:12px; }
+  .flow-step .flow-toolbar p { font-size:10px; margin-top:3px; }
+  .flow-step .flow-actions { justify-content:space-between; }
+  .flow-step .flow-actions .button { min-height:35px; padding:8px 11px; font-size:10px; }
+  .flow-step .af-workspace-toolbar { flex-wrap:nowrap; padding:8px 10px; gap:8px; }
+  .flow-step .af-workspace-toolbar>div { display:none; }
+  .flow-step .af-workspace-toolbar label { width:100%; max-width:none; display:flex; align-items:center; gap:8px; }
+  .flow-step .af-workspace-toolbar select { width:100%; max-width:none; min-height:32px; }
+  .flow-step .af-workspace-legend { gap:6px 10px; padding:7px 10px; font-size:9px; }
+  .flow-step .af-workspace-scope { padding:6px 10px; }
+}

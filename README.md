@@ -22,8 +22,8 @@ Studio opens a local browser page and prints its address. The server listens on 
 ### First trial
 
 1. Start Studio using the instructions above. A local folder is optional: `npm start` opens the workbench with the current folder selected.
-2. In **Project source**, keep **Local folder**, or select **GitHub repository** / **npm package** and choose **Fetch project**. For example, enter a public repository URL or `footprintjs@9.44.1`. A remote source is downloaded to this computer before assessment.
-3. Keep the built-in **Local open-source readiness** template for the first run. Click a stage in the vertical chart to see its rule and evidence requirements, then choose **Run assessment**.
+2. In **Project**, keep **Local folder**, or select **GitHub repository** / **npm package** and choose **Fetch project**. For example, enter a public repository URL or `footprintjs@9.44.1`. A remote source is downloaded to this computer before assessment. Choose **Continue to Method**; a local folder is inspected before advancing.
+3. In **Method**, keep the built-in **Local open-source readiness** template for the first run. Continue to **Flow**, click a stage to see its rule and evidence requirements, then choose **Run assessment**.
 4. Inspect the findings, source scope, original evidence, and **What happened?** replay. Missing files or an unavailable scanner remain visible as negative or incomplete findings. The governance stage waits for a human review.
 5. Export HTML or JSON when ready to share the assessment. These exports contain source paths and supplied reviewer details, so inspect them before sharing.
 
@@ -84,7 +84,9 @@ A completed run means that the selected checks finished. It can still contain ne
 
 ## Flow workspace
 
-Studio opens a connected flowchart built by the same FootprintJS chart definition that runs the checks. Choose a project source and a published template, then click a node to inspect its rule, evidence paths, tool, and review requirement. The chart reads from top to bottom at a readable scale, with downward arrows and a stage inspector alongside it on wider screens. Scroll the page to follow the sequence; drag to pan, use the zoom buttons, or fit the chart. The stage selector provides a keyboard alternative. On narrow screens, selecting a stage brings its inspector into view, with **Back to flow** to return. Arrows show the actual sequential evaluation order, not causal dependencies between findings.
+Studio uses three focused steps: **Project** selects the subject, **Method** selects or configures the assessment policy, and **Flow** shows the connected chart built by the same FootprintJS definition that runs the checks. Your source inputs, fetched folder, and method selection stay in place when moving between steps. An unpublished flow editor or recorded run keeps setup locked: use **Leave draft** or **New assessment** to return to setup. Leaving a draft retains it in Templates.
+
+The Flow chart runs from top to bottom and automatically fits the available viewport. Click a node to inspect its rule, evidence paths, tool, and review requirement. On wider screens, the inspector scrolls independently alongside the chart; on mobile, switch between **Chart** and **Selected stage**. Larger graphs support zoom, drag panning, **Fit chart**, and the stage selector, which also provides a keyboard alternative. Fitting a large graph may require zooming in to read individual stages. Arrows retain the actual evaluation order, not causal dependencies between findings.
 
 Choose **Configure stage** or **Edit flow** to use the template editor in the side inspector. The initial node opens flow settings; a criterion node opens its rule and collector controls. Copies of the built-in policy become custom drafts. Draft edits are validated by the engine and must be published before running. **Publish flow** selects the returned exact version. Older versions and runs remain unchanged; editing an older saved version cannot silently replace a newer one. **Leave draft** retains the unfinished editor in Templates and restores the workspace's selected published method.
 

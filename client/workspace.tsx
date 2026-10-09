@@ -2,14 +2,14 @@ import * as React from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Background, BackgroundVariant, Handle, MarkerType, Position, ReactFlow,
+  Background, BackgroundVariant, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider,
   getNodesBounds, getViewportForBounds, useReactFlow,
 } from '@xyflow/react';
 import type { Edge, Node, NodeProps, NodeTypes, Viewport } from '@xyflow/react';
 import { graphFromStructure } from 'footprint-explainable-ui';
 import { createDagreTraceLayout } from 'footprint-explainable-ui/flowchart';
 import type { TraceGraph } from 'footprint-explainable-ui/flowchart';
-import type { CriterionDefinition, CriterionResult, CriterionStatus, RunEvent, TemplateCriterion } from '../src/types.ts';
+import type { CriterionDefinition, CriterionResult, CriterionStatus, RunEvent } from '../src/types.ts';
 import './workspace.css';
 
 export interface WorkspaceOptions {
@@ -30,16 +30,15 @@ export interface WorkspaceHandle {
 type TraversalState = 'configured' | 'waiting' | 'running' | 'completed' | 'interrupted' | 'unrecorded';
 type StageData = Record<string, unknown> & {
   label: string;
-  collectorLabel: string;
   order: number;
   traversal: TraversalState;
   finding?: CriterionStatus;
   chosen: boolean;
 };
 type StageNode = Node<StageData>;
-const NODE_WIDTH = 300;
-const NODE_HEIGHT = 112;
-const ROW_GAP = 32;
+const NODE_WIDTH = 320;
+const NODE_HEIGHT = 64;
+const ROW_GAP = 18;
 const MAX_STAGES = 128;
 const findingLabels: Record<CriterionStatus, string> = {
   satisfied: 'Satisfied',
@@ -52,18 +51,7 @@ const traversalLabels: Record<TraversalState, string> = {
   configured: 'Configured', waiting: 'Not started', running: 'Running',
   completed: 'Completed', interrupted: 'Interrupted', unrecorded: 'Event not recorded',
 };
-const directedLayout = createDagreTraceLayout({ direction: 'TB', nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT, rankSep: 60, nodeSep: 42 });
-
-function criterionType(criterion?: CriterionDefinition): string {
-  if (!criterion) return 'Evaluation state';
-  const template = criterion as Partial<TemplateCriterion>;
-  const expert = criterion.mode === 'expert' || template.evaluation?.kind === 'expert' ||
-    (template.evaluation?.kind === 'builtin' && template.evaluation.criterionId === 'governance-review');
-  if (expert) return 'Expert review';
-  const tool = template.collector?.toolId;
-  const collector = tool === 'osv-scanner' ? 'OSV-Scanner' : tool === 'project-files' ? 'Project files' : 'Automatic check';
-  return template.requiresReview ? `${collector} · review required` : collector;
-}
+const directedLayout = createDagreTraceLayout({ direction: 'TB', nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT, rankSep: 28, nodeSep: 42 });
 
 function traversalState(id: string, options: WorkspaceOptions): TraversalState {
   if (options.mode === 'draft') return 'configured';
@@ -120,10 +108,8 @@ function AssessmentNode({ data }: NodeProps<StageNode>) {
           <Handle id={`out-${side}`} type="source" position={position as Position} isConnectable={false} />
         </React.Fragment>
       ))}
-      <div className="af-workspace-node-top"><span className="af-workspace-node-order">{String(data.order).padStart(2, '0')}</span><span className="af-workspace-traversal"><span aria-hidden="true" />{traversalLabels[data.traversal]}</span></div>
-      <div className="af-workspace-node-title">{data.label}</div>
-      <div className="af-workspace-node-tool">{data.collectorLabel}</div>
-      <div className="af-workspace-node-finding">{data.finding ? <><span className="af-workspace-finding-label">Current finding</span><span className={`af-workspace-finding finding-${data.finding}`}>{findingLabels[data.finding]}</span></> : <span className="af-workspace-no-finding">{data.traversal === 'configured' ? 'Select to configure' : 'No finding recorded'}</span>}</div>
+      <div className="af-workspace-node-head"><span className="af-workspace-node-order">{String(data.order).padStart(2, '0')}</span><div className="af-workspace-node-title">{data.label}</div></div>
+      <div className="af-workspace-node-bottom"><span className="af-workspace-traversal"><span aria-hidden="true" />{traversalLabels[data.traversal]}</span><span className="af-workspace-node-finding">{data.finding ? <><span className="af-workspace-finding-label">Finding</span><span className={`af-workspace-finding finding-${data.finding}`}>{findingLabels[data.finding]}</span></> : <span className="af-workspace-no-finding">{data.traversal === 'configured' ? 'Select to configure' : 'No finding recorded'}</span>}</span></div>
     </div>
   );
 }
@@ -132,6 +118,10 @@ const nodeTypes: NodeTypes = { assessmentStage: AssessmentNode };
 function ViewportControls({ onFit }: { onFit: () => void }) {
   const { zoomIn, zoomOut } = useReactFlow();
   return <div className="af-workspace-canvas-controls nodrag nopan"><button type="button" onClick={() => { void zoomOut({ duration: 120 }); }} aria-label="Zoom out">−</button><button type="button" onClick={() => { void zoomIn({ duration: 120 }); }} aria-label="Zoom in">+</button><button type="button" className="af-workspace-fit" onClick={onFit}>Fit chart</button></div>;
+}
+
+function WorkspaceHelp() {
+  return <details className="af-workspace-help"><summary>About this flow</summary><div className="af-workspace-legend"><span><i className="legend-running" />Running</span><span><i className="legend-completed" />Stage completed</span><span><i className="legend-selected" />Selected for inspection</span><span className="af-workspace-legend-note">Completion describes traversal. Current findings are separate.</span></div><p className="af-workspace-scope">Arrows come from the assessment builder. Project input capture happens before this evaluation; attributed human review is separate.</p></details>;
 }
 
 function WorkspaceCanvas({ nodes, edges, topologyKey, onSelect }: { nodes: StageNode[]; edges: Edge[]; topologyKey: string; onSelect: WorkspaceOptions['onSelect'] }) {
@@ -147,6 +137,9 @@ function WorkspaceCanvas({ nodes, edges, topologyKey, onSelect }: { nodes: Stage
     const measure = () => {
       const width = element.clientWidth;
       const height = element.clientHeight;
+      // A focused view can temporarily hide this mounted chart. Keep its last
+      // visible size so returning to it does not reset a user's inspection zoom.
+      if (width <= 0 || height <= 0) return;
       setSize(previous => previous.width === width && previous.height === height ? previous : { width, height });
     };
     measure();
@@ -155,31 +148,27 @@ function WorkspaceCanvas({ nodes, edges, topologyKey, onSelect }: { nodes: Stage
     return () => observer.disconnect();
   }, []);
   const fit = useCallback(() => {
-    if (size.width > 0 && size.height > 0) setViewport(getViewportForBounds(bounds, size.width, size.height, 0.08, 1, 0.10));
+    if (size.width > 0 && size.height > 0) setViewport(getViewportForBounds(bounds, size.width, size.height, 0.01, 1, 0.10));
   }, [bounds, size.width, size.height]);
-  // Give the sequence its own page height at readable zoom. Selection and
-  // progress updates leave the viewport alone; only a changed path or width
-  // resets this reading view. Fit remains an explicit overview action.
-  const readingZoom = size.width > 0 ? Math.min(1, Math.max(0.08, (size.width - 32) / Math.max(bounds.width, 1))) : 1;
-  const readingHeight = Math.max(430, Math.ceil(bounds.height * readingZoom + 80));
+  // Fit the authored topology to the bounded canvas. Selection, findings and
+  // live events do not change these bounds, so a user's pan or zoom is retained.
   useEffect(() => {
-    if (size.width > 0) setViewport({ x: (size.width - bounds.width * readingZoom) / 2 - bounds.x * readingZoom, y: 24 - bounds.y * readingZoom, zoom: readingZoom });
-  }, [bounds, size.width, readingZoom]);
-  return <div className="af-workspace-canvas" ref={canvas} style={{ height: readingHeight }}>
+    fit();
+  }, [fit]);
+  return <div className="af-workspace-canvas-group"><ReactFlowProvider><div className="af-workspace-canvas" ref={canvas}>
     <ReactFlow
       nodes={nodes} edges={edges} nodeTypes={nodeTypes}
       viewport={viewport} onViewportChange={setViewport}
       onNodeClick={(_event, node) => onSelect(node.id)}
       nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false}
       deleteKeyCode={null} selectionOnDrag={false} selectNodesOnDrag={false}
-      minZoom={0.08} maxZoom={1.75} panOnScroll={false} zoomOnScroll={false} preventScrolling={false} zoomOnDoubleClick={false}
+      minZoom={0.01} maxZoom={1.75} panOnScroll={false} zoomOnScroll={false} preventScrolling={false} zoomOnDoubleClick={false}
       proOptions={{ hideAttribution: true }}
       ariaLabelConfig={{ 'node.a11yDescription.default': 'Select a stage to inspect or configure it. Use the stage selector above as a keyboard alternative.', 'controls.ariaLabel': 'Chart view controls' }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d4d0c6" />
-      <ViewportControls onFit={fit} />
     </ReactFlow>
-  </div>;
+  </div><div className="af-workspace-footer"><ViewportControls onFit={fit} /><WorkspaceHelp /></div></ReactFlowProvider></div>;
 }
 
 function Workspace(options: WorkspaceOptions) {
@@ -205,10 +194,10 @@ function Workspace(options: WorkspaceOptions) {
       ...node, type: 'assessmentStage', width: NODE_WIDTH, height: NODE_HEIGHT,
       style: { ...node.style, width: NODE_WIDTH, height: NODE_HEIGHT },
       selected: node.id === options.selectedId, draggable: false, connectable: false,
-      ariaLabel: `${node.id === '_freeze-inputs' ? 'Initialize evaluation' : criterion?.title || node.data.label}. ${traversalLabels[traversal]}. Select to inspect.`,
+      ariaLabel: `${node.id === '_freeze-inputs' ? 'Initialize evaluation' : criterion?.title || node.data.label}. Traversal: ${traversalLabels[traversal]}.${options.mode !== 'draft' && results.get(node.id) ? ` Current finding: ${findingLabels[results.get(node.id)!.status]}.` : ''} Select to inspect.`,
       data: {
         ...node.data, label: node.id === '_freeze-inputs' ? 'Initialize evaluation' : criterion?.title || node.data.label,
-        collectorLabel: criterionType(criterion), order: (indices.get(node.id) ?? 0) + 1,
+        order: (indices.get(node.id) ?? 0) + 1,
         traversal, chosen: node.id === options.selectedId,
         finding: options.mode === 'draft' ? undefined : results.get(node.id)?.status,
       },
@@ -233,8 +222,6 @@ function Workspace(options: WorkspaceOptions) {
     <section className="af-workspace" aria-label="Assessment flowchart">
       <div className="af-workspace-toolbar"><div><strong>{modeLabel}</strong><span>{nodes.length} stages · top to bottom</span></div><label htmlFor={pickerId}>Select stage<select id={pickerId} value={options.selectedId || ''} onChange={event => { if (event.currentTarget.value) options.onSelect(event.currentTarget.value); }}><option value="">Choose a stage</option>{built.order.map(id => <option key={id} value={id}>{(indices.get(id) ?? 0) + 1}. {nodeById.get(id)?.data.label}</option>)}</select></label></div>
       <WorkspaceCanvas nodes={nodes} edges={edges} topologyKey={topologyKey} onSelect={options.onSelect} />
-      <div className="af-workspace-legend"><span><i className="legend-running" />Running</span><span><i className="legend-completed" />Stage completed</span><span><i className="legend-selected" />Selected for inspection</span><span className="af-workspace-legend-note">Completion describes traversal. Current findings are separate.</span></div>
-      <p className="af-workspace-scope">Arrows come from the assessment builder. Project input capture happens before this evaluation; attributed human review is separate.</p>
     </section>
   );
 }

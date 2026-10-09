@@ -47,7 +47,15 @@
         <div id="flow-setup" class="flow-setup">
           <section class="panel flow-project" aria-labelledby="project-heading">
             <h2 id="project-heading">Project</h2>
-            <form id="project-form"><label class="field-label" for="project-path">Local project folder</label><div class="input-action"><input id="project-path" name="projectPath" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/your/project" required><button id="inspect-button" type="submit" class="button secondary">Inspect</button></div></form>
+            <label class="field-label" for="project-source-kind">Project source</label>
+            <select id="project-source-kind" disabled><option value="local">Local folder</option><option value="github">GitHub repository</option><option value="npm">npm package</option></select>
+            <form id="remote-source-form" hidden>
+              <label id="remote-source-label" class="field-label" for="remote-source">GitHub repository URL</label>
+              <div class="input-action"><input id="remote-source" name="source" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repository" maxlength="2048" required><button id="fetch-project" type="submit" class="button secondary" disabled>Fetch project</button></div>
+              <p id="remote-source-example" class="field-help">Example: https://github.com/owner/repository</p>
+              <p class="field-help">Fetching uses the Internet to download a public source into a local folder and records its pinned revision. It does not install dependencies or run project scripts. Assessment checks still use the selected network policy below.</p>
+            </form>
+            <div id="project-folder-field"><form id="project-form"><label id="project-path-label" class="field-label" for="project-path">Local project folder</label><div class="input-action"><input id="project-path" name="projectPath" type="text" spellcheck="false" autocomplete="off" placeholder="/path/to/your/project" required><button id="inspect-button" type="submit" class="button secondary">Inspect</button></div></form></div>
             <div id="project-preview" class="project-preview" hidden></div>
           </section>
           <section class="panel flow-method" aria-labelledby="criteria-heading">
@@ -60,6 +68,7 @@
         <div class="flow-workbench">
           <section id="flow-graph" class="flow-graph-mount" aria-label="Assessment flowchart"><p class="empty-copy">Loading the connected chart…</p></section>
           <aside id="flow-inspector" class="flow-inspector" aria-label="Stage configuration">
+            <div class="compact-heading flow-back-nav"><button id="back-to-flow" type="button" class="text-button">↑ Back to flow</button></div>
             <div id="flow-stage-details"></div>
             <div id="flow-stage-editor" class="template-builder" hidden></div>
             <section class="flow-readiness" aria-labelledby="readiness-heading"><div class="compact-heading"><h2 id="readiness-heading">Tool readiness</h2><button type="button" data-view="tools" class="text-button">Setup ↗</button></div><div id="tool-readiness"></div></section>

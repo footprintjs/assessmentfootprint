@@ -3,6 +3,7 @@
 const state = {
   catalog: [], tools: [], runs: [], selected: new Set(), sessionToken: '',
   run: null, project: null, view: 'assessment', ready: false, submitting: false, inspecting: false,
+  sourceKind: 'local', sourceImporting: false, projectRequest: 0, localProjectPath: '', fetchedProject: null,
   pollTimer: null, activeRunId: null, evidenceRequest: 0, reviewBusy: false,
   templates: [], builtinTemplate: null, assessmentTemplate: null, templateSelectionRequest: 0,
   templateSelectionLoading: false, editor: null, editorRequest: 0, publishing: false,
@@ -153,7 +154,7 @@ function renderCriteria() {
 function updateSelection() {
   const count = state.selected.size;
   $('#selection-count').textContent = `${count} ${count === 1 ? 'criterion' : 'criteria'} selected`;
-  $('#run-button').disabled = !state.ready || !count || state.submitting || state.inspecting || state.templateSelectionLoading || !$('#project-path').value.trim() || state.flowEditing || state.flowMode !== 'draft' || !state.flowValid;
+  $('#run-button').disabled = !state.ready || !count || state.submitting || state.inspecting || state.sourceImporting || state.templateSelectionLoading || !projectSourceReady() || state.flowEditing || state.flowMode !== 'draft' || !state.flowValid;
   $('#restore-defaults').hidden = Boolean(state.assessmentTemplate);
   $('#restore-defaults').disabled = !state.ready || state.submitting;
   renderReadiness();
@@ -191,33 +192,116 @@ function renderProject(project) {
   if (project.gitDirty !== null && project.gitDirty !== undefined) facts.append(node('span', '', project.gitDirty ? 'Uncommitted changes present' : 'Working tree clean'));
   facts.append(node('span', '', `${(project.detectedFiles || []).length} recognised project files`));
   append(preview, title, facts);
+  if (project.source) {
+    const source = project.source;
+    const label = source.kind === 'github' ? 'GitHub repository' : 'npm published package';
+    append(preview,
+      node('p', 'field-help', `${label}: ${source.name}`),
+      node('p', 'field-help mono', `Pinned ${source.kind === 'github' ? 'commit' : 'version'}: ${source.revision}`),
+      node('p', 'field-help', source.kind === 'npm'
+        ? 'Checks assess files in this published package archive. It may omit source files, tests, and lockfiles from its development repository.'
+        : 'Checks assess the selected evidence files in this downloaded repository archive.'),
+      source.selectedInputs === 'changed' ? node('p', 'field-help', 'Selected inputs changed locally after download. Findings use the captured local bytes; the pin identifies their downloaded origin.') : null,
+      button('Copy pinned source', 'text-button', async () => {
+        try {
+          await navigator.clipboard.writeText(`${source.url}\n${source.kind === 'github' ? 'Commit' : 'Version'}: ${source.revision}\nArchive SHA-256: ${source.archiveSha256}`);
+          showNotice('Pinned source details copied.');
+        } catch { showNotice('Pinned source details could not be copied. Select the source and revision text above.', true); }
+      }));
+  }
+}
+
+function projectSourceReady() {
+  const path = $('#project-path').value.trim();
+  if (state.sourceKind === 'local') return Boolean(path);
+  const fetched = state.fetchedProject;
+  return Boolean(fetched && state.project && fetched.kind === state.sourceKind && fetched.requested === $('#remote-source').value.trim() && fetched.path === path && state.project.path === path);
+}
+
+function updateProjectControls() {
+  const busy = state.submitting || state.inspecting || state.sourceImporting;
+  const remote = state.sourceKind !== 'local';
+  $('#project-source-kind').value = state.sourceKind;
+  $('#project-source-kind').disabled = busy || !state.ready;
+  $('#remote-source-form').hidden = !remote;
+  $('#remote-source').disabled = busy;
+  $('#fetch-project').disabled = busy || !state.ready || !$('#remote-source').value.trim();
+  $('#fetch-project').textContent = state.sourceImporting ? 'Fetching…' : 'Fetch project';
+  $('#project-folder-field').hidden = remote && !state.project;
+  $('#project-path').disabled = busy;
+  $('#project-path').readOnly = remote;
+  $('#project-path-label').textContent = remote ? 'Fetched local folder' : 'Local project folder';
+  $('#inspect-button').hidden = remote;
+  $('#inspect-button').disabled = busy || remote || !state.ready;
+  $('#remote-source-label').textContent = state.sourceKind === 'npm' ? 'npm package URL or package name' : 'GitHub repository URL';
+  $('#remote-source').placeholder = state.sourceKind === 'npm' ? 'https://www.npmjs.com/package/footprintjs' : 'https://github.com/owner/repository';
+  $('#remote-source-example').textContent = state.sourceKind === 'npm'
+    ? 'Examples: https://www.npmjs.com/package/footprintjs · footprintjs@9.48.0 · @scope/package@1.2.3'
+    : 'Example: https://github.com/owner/repository. The default branch is resolved to an exact commit.';
+}
+
+function changeProjectSource(kind) {
+  if (!['local', 'github', 'npm'].includes(kind) || state.submitting || state.inspecting || state.sourceImporting) return;
+  if (kind === state.sourceKind) return;
+  if (state.sourceKind === 'local') state.localProjectPath = $('#project-path').value;
+  state.projectRequest += 1;
+  state.sourceKind = kind; state.project = null; state.fetchedProject = null;
+  $('#project-path').value = kind === 'local' ? state.localProjectPath : '';
+  $('#remote-source').value = '';
+  renderProject(null); updateProjectControls(); updateSelection(); clearNotice();
+}
+
+async function fetchProject() {
+  if (state.sourceKind === 'local' || state.sourceImporting || state.inspecting || state.submitting || !state.ready) return;
+  if (!$('#remote-source-form').reportValidity()) return;
+  const kind = state.sourceKind;
+  const requested = $('#remote-source').value.trim();
+  const request = ++state.projectRequest;
+  state.sourceImporting = true; state.project = null; state.fetchedProject = null;
+  $('#project-path').value = '';
+  renderProject(null); updateProjectControls(); updateSelection(); clearNotice();
+  try {
+    const imported = await api('/api/projects/import', { method: 'POST', body: JSON.stringify({ kind, source: requested }) });
+    if (request !== state.projectRequest || kind !== state.sourceKind || requested !== $('#remote-source').value.trim()) return;
+    if (!imported.project || typeof imported.project.path !== 'string' || !imported.project.path || !imported.source || imported.source.kind !== kind) throw new Error('The local engine did not return a fetched project and its pinned source.');
+    const project = { ...imported.project, source: imported.project.source || imported.source };
+    state.project = project;
+    state.fetchedProject = { kind, requested, path: project.path };
+    $('#project-path').value = project.path;
+    renderProject(project);
+    showNotice(`Fetched ${project.source.name} at ${kind === 'github' ? 'commit' : 'version'} ${project.source.revision}. The assessment network policy is unchanged.`);
+  } catch (error) {
+    if (request === state.projectRequest) showNotice(`Project could not be fetched. ${error.message}`, true);
+  } finally {
+    if (request === state.projectRequest) { state.sourceImporting = false; updateProjectControls(); updateSelection(); }
+  }
 }
 
 async function inspectProject() {
+  if (state.sourceKind !== 'local' || state.inspecting || state.sourceImporting || state.submitting || !state.ready) return;
   const form = $('#project-form');
   if (!form.reportValidity()) return;
+  const requested = $('#project-path').value.trim();
+  const request = ++state.projectRequest;
   const inspect = $('#inspect-button');
   const original = inspect.textContent;
   state.inspecting = true;
-  $('#project-path').disabled = true;
-  inspect.disabled = true;
+  updateProjectControls();
   inspect.textContent = 'Inspecting…';
   updateSelection();
   clearNotice();
   try {
-    const project = await api('/api/projects/inspect', { method: 'POST', body: JSON.stringify({ projectPath: $('#project-path').value.trim() }) });
+    const project = await api('/api/projects/inspect', { method: 'POST', body: JSON.stringify({ projectPath: requested }) });
+    if (request !== state.projectRequest || state.sourceKind !== 'local') return;
     state.project = project;
     $('#project-path').value = project.path;
+    state.localProjectPath = project.path;
     renderProject(project);
     updateSelection();
     showNotice(`Ready to assess ${project.name}.`);
-  } catch (error) { showNotice(error.message, true); renderProject(null); }
+  } catch (error) { if (request === state.projectRequest) { state.project = null; showNotice(error.message, true); renderProject(null); } }
   finally {
-    state.inspecting = false;
-    $('#project-path').disabled = state.submitting;
-    inspect.disabled = state.submitting;
-    inspect.textContent = original;
-    updateSelection();
+    if (request === state.projectRequest) { state.inspecting = false; inspect.textContent = original; updateProjectControls(); updateSelection(); }
   }
 }
 
@@ -317,8 +401,7 @@ function renderProgress(run) {
 
 function setConfigurationBusy(busy) {
   state.submitting = busy;
-  $('#project-path').disabled = busy;
-  $('#inspect-button').disabled = busy;
+  updateProjectControls();
   document.querySelectorAll('#criterion-list input, input[name="network-mode"]').forEach(input => { input.disabled = busy || Boolean(state.assessmentTemplate); });
   $('#assessment-template').disabled = busy || state.templateSelectionLoading;
   $('#assessment-template-version').disabled = busy || state.templateSelectionLoading;
@@ -327,7 +410,8 @@ function setConfigurationBusy(busy) {
 }
 
 async function startRun() {
-  if (state.submitting || state.inspecting || state.templateSelectionLoading || !state.ready) return;
+  if (state.submitting || state.inspecting || state.sourceImporting || state.templateSelectionLoading || !state.ready) return;
+  if (!projectSourceReady()) { showNotice(state.sourceKind === 'local' ? 'Enter a local project folder.' : 'Fetch the selected source before running its assessment.', true); return; }
   if (!$('#project-form').reportValidity()) return;
   if (!state.selected.size) { showNotice('Select at least one criterion.', true); return; }
   if (!state.flowValid || state.flowEditing || state.flowMode !== 'draft') { showNotice('Choose a valid published flow before running.', true); return; }
@@ -398,6 +482,13 @@ function renderRun() {
   const tags = node('div', 'intro-tags');
   append(tags, badge(run.status), node('span', 'tag', 'Self-assessment'), node('span', 'tag muted', run.networkMode === 'online' ? 'Public lookups allowed' : 'Offline run'));
   title.append(tags);
+  if (run.subject.source) {
+    const source = run.subject.source;
+    title.append(node('p', 'run-source-scope', source.kind === 'npm'
+      ? `Assessed the published npm package at version ${source.revision}. Files absent here may exist in its development repository.`
+      : `Downloaded origin: GitHub ${source.name} at commit ${source.revision}. This assessment covers the captured local input files.`));
+    if (source.selectedInputs === 'changed') title.append(node('p', 'run-source-edit-note', 'Selected inputs changed locally after download. Findings use the captured local files; the pin identifies their downloaded origin.'));
+  }
   const actions = node('div', 'run-actions');
   append(actions, button('View recorded flow', 'button secondary small', () => showRunFlow(run)), button('Refresh', 'button secondary small', () => loadRun(run.id)), button('Export HTML', 'button secondary small', event => downloadExport('html', event.currentTarget)), button('Export JSON', 'button secondary small', event => downloadExport('json', event.currentTarget)));
   append(intro, title, actions);
@@ -418,6 +509,22 @@ function renderRun() {
   context.append(info);
   if (run.template) {
     append(info, metadata(oneOffPolicy ? 'Captured one-off policy' : 'Captured template', capturedPolicyLabel(run.template)), metadata(oneOffPolicy ? 'Policy identifier' : 'Template identifier', run.template.id), metadata(oneOffPolicy ? 'Policy SHA-256' : 'Template policy SHA-256', run.template.policyDigest, true, true));
+  }
+  if (run.subject.source) {
+    const source = run.subject.source;
+    append(info,
+      metadata('Imported project source', `${source.kind === 'github' ? 'GitHub repository' : 'npm published package'} · ${source.name}`, true),
+      metadata('Source URL', source.url, true), metadata('Requested source', source.requested, true),
+      metadata(source.kind === 'github' ? 'Pinned source commit' : 'Pinned package version', source.revision, true, true),
+      metadata('Requested reference', source.reference), metadata('Fetched', formatDate(source.fetchedAt)),
+      metadata('Downloaded archive SHA-256', source.archiveSha256, true, true),
+      metadata('Verified advertised integrity', source.integrity, true, true),
+      metadata('Imported archive contents', `${source.fileCount} files · ${source.extractedBytes} bytes`),
+      metadata('Selected imported inputs', source.selectedInputs === 'changed' ? 'Changed locally after download' : source.selectedInputs === 'unchanged' ? 'Unchanged from the imported archive' : 'Not recorded'));
+    if (source.selectedInputs === 'changed') append(info, metadata('Changed selected paths', (source.changedPaths || []).join(', '), true));
+    context.append(node('p', 'field-help', source.kind === 'npm'
+      ? 'This source is the published npm archive, which can differ from its development repository. The source snapshot covers only the evidence files named by the assessment policy.'
+      : 'The imported repository was pinned before assessment. The source snapshot covers only the evidence files named by the assessment policy.'));
   }
   const workflowEvidence = run.evidence.filter(evidence => evidence.toolId === 'footprintjs');
   if (workflowEvidence.length) {
@@ -1335,6 +1442,7 @@ function selectFlowStage(id) {
     filterFlowEditor();
   } else renderFlowInspector();
   updateFlowGraph();
+  if (window.matchMedia('(max-width: 900px)').matches) $('#flow-inspector').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
 function flowConfigureButton(label) {
@@ -1509,6 +1617,7 @@ $('#flow-edit').addEventListener('click', beginFlowEdit);
 $('#flow-leave-draft').addEventListener('click', () => leaveFlowDraft());
 $('#flow-new-draft').addEventListener('click', resetFlowDraft);
 $('#flow-report').addEventListener('click', () => openFlowReport());
+$('#back-to-flow').addEventListener('click', () => $('#flow-graph').scrollIntoView({ block: 'start', behavior: 'smooth' }));
 
 document.querySelectorAll('[data-view]').forEach(element => element.addEventListener('click', async () => {
   const view = element.dataset.view;
@@ -1518,7 +1627,18 @@ document.querySelectorAll('[data-view]').forEach(element => element.addEventList
   catch (error) { showNotice(error.message, true); }
 }));
 $('#project-form').addEventListener('submit', event => { event.preventDefault(); inspectProject(); });
-$('#project-path').addEventListener('input', () => { state.project = null; renderProject(null); updateSelection(); });
+$('#project-source-kind').addEventListener('change', event => changeProjectSource(event.currentTarget.value));
+$('#remote-source-form').addEventListener('submit', event => { event.preventDefault(); fetchProject(); });
+$('#remote-source').addEventListener('input', () => {
+  if (state.sourceImporting || state.submitting || state.inspecting) return;
+  state.projectRequest += 1; state.project = null; state.fetchedProject = null; $('#project-path').value = '';
+  renderProject(null); updateProjectControls(); updateSelection();
+});
+$('#project-path').addEventListener('input', () => {
+  if (state.sourceKind !== 'local' || state.submitting || state.inspecting || state.sourceImporting) return;
+  state.projectRequest += 1; state.localProjectPath = $('#project-path').value; state.project = null;
+  renderProject(null); updateSelection();
+});
 document.querySelectorAll('input[name="network-mode"]').forEach(input => input.addEventListener('change', () => { renderReadiness(); scheduleFlowPreview(); }));
 $('#assessment-template').addEventListener('change', event => selectAssessmentTemplate(event.currentTarget.value));
 $('#assessment-template-version').addEventListener('change', event => { if (state.assessmentTemplate) selectAssessmentTemplate(state.assessmentTemplate.id, Number(event.currentTarget.value)); });
@@ -1573,8 +1693,10 @@ $('#evidence-dialog').addEventListener('close', () => { state.evidenceRequest +=
     state.sessionToken = data.sessionToken || '';
     state.selected = new Set(state.catalog.filter(item => item.defaultEnabled).map(item => item.id));
     $('#project-path').value = data.projectPath || '';
+    state.localProjectPath = $('#project-path').value;
     $('#storage-path').textContent = data.dataDir || 'Location not supplied by the engine.';
     state.ready = true;
+    updateProjectControls();
     $('#engine-status').replaceChildren(node('span', 'status-dot'), document.createTextNode('Local engine connected'));
     renderCriteria(); renderHistory(); renderTools(); renderTemplateLibrary(); renderAssessmentTemplateSelector();
     const builtin = state.templates.find(template => template.id === 'oss-readiness');

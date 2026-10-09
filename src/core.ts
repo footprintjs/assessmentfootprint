@@ -7,11 +7,13 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, resolve, basename, sep } from 'node:path';
 import { FlowChartExecutor } from 'footprintjs';
 import { metrics } from 'footprintjs/recorders';
-import type { AssessmentRun, CriterionDefinition, CriterionResult, CriterionStatus, EvidenceRecord, ProjectInfo, ReviewInput, RunEvent, RunInput, RunSummary, ToolDefinition, TemplateDraft, TemplateVersion, TemplateSummary, TemplateCriterion, WorkflowRecording, WorkflowResponse, FlowSelection, FlowPreviewInput, FlowPreview } from './types.ts';
+import type { AssessmentRun, CriterionDefinition, CriterionResult, CriterionStatus, EvidenceRecord, ProjectInfo, ReviewInput, RunEvent, RunInput, RunSummary, ToolDefinition, TemplateDraft, TemplateVersion, TemplateSummary, TemplateCriterion, WorkflowRecording, WorkflowResponse, FlowSelection, FlowPreviewInput, FlowPreview, SourceImportInput, SourceImportResult } from './types.ts';
 import { AssessmentError } from './errors.ts';
 export { AssessmentError } from './errors.ts';
 import { builtInTemplate, DEFAULT_TEMPLATE_ID, generatedTemplateId, normalizeTemplateDraft, policyDigest, templateIdentifier, templateInputPaths } from './templates.ts';
 import { buildAssessmentChart, INITIALIZE_STAGE_ID } from './chart.ts';
+import { SourceImporter } from './source-import.ts';
+import type { SourceFetch, SourceLimits } from './source-import.ts';
 
 const execFileAsync = promisify(execFile);
 const VERSION = '0.3.0';
@@ -75,12 +77,15 @@ export class AssessmentEngine {
   private db: DatabaseSync;
   private active = false;
   private osvExecutable: string;
+  private readonly sourceImporter: SourceImporter;
+  private importing = false;
 
-  constructor(options: { dataDir: string; osvExecutable?: string }) {
+  constructor(options: { dataDir: string; osvExecutable?: string; sourceFetch?: SourceFetch; sourceLimits?: Partial<SourceLimits> }) {
     this.dataDir = resolve(options.dataDir);
     this.osvExecutable = options.osvExecutable ?? 'osv-scanner';
     mkdirSync(this.dataDir, { recursive: true, mode: 0o700 });
     mkdirSync(join(this.dataDir, 'runs'), { recursive: true, mode: 0o700 });
+    this.sourceImporter = new SourceImporter(this.dataDir, { fetch: options.sourceFetch, limits: options.sourceLimits, validateProject: async path => { await this.capture(await realpath(path)); } });
     this.db = new DatabaseSync(join(this.dataDir, 'assessment.sqlite'));
     this.db.exec('PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, started_at TEXT NOT NULL, payload TEXT NOT NULL);');
     this.db.exec(`CREATE TABLE IF NOT EXISTS template_versions (template_id TEXT NOT NULL, version INTEGER NOT NULL, created_at TEXT NOT NULL, policy_digest TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(template_id, version));
@@ -199,10 +204,20 @@ export class AssessmentEngine {
   async inspectProject(projectPath: string): Promise<ProjectInfo> {
     const root = await this.projectRoot(projectPath);
     const files = await this.capture(root);
-    return this.describeProject(root, files);
+    return this.describeProject(root, files, INPUT_FILES);
   }
 
-  private async describeProject(root: string, files: CapturedFile[]): Promise<ProjectInfo> {
+  async importProject(input: SourceImportInput): Promise<SourceImportResult> {
+    if (this.active || this.importing) throw new AssessmentError(409, 'Wait for the current assessment or source fetch to finish.');
+    this.importing = true;
+    try {
+      const imported = await this.sourceImporter.import(input);
+      const project = await this.inspectProject(imported.projectPath);
+      return { project, source: project.source ?? imported.source };
+    } finally { this.importing = false; }
+  }
+
+  private async describeProject(root: string, files: CapturedFile[], requestedPaths: string[]): Promise<ProjectInfo> {
     const manifest = parseManifest(files.find(f => f.path === 'package.json'));
     let gitCommit: string | null = null;
     let gitDirty: boolean | null = null;
@@ -215,11 +230,12 @@ export class AssessmentEngine {
         gitDirty = null;
       }
     } catch { /* A local folder does not have to be a Git repository. */ }
-    return { path: root, name: labelManifest(manifest, 'name') ?? basename(root), packageVersion: labelManifest(manifest, 'version'), gitCommit, gitDirty, detectedFiles: files.map(f => f.path) };
+    const source = this.sourceImporter.originFor(root, requestedPaths, files);
+    return { path: root, name: labelManifest(manifest, 'name') ?? source?.name ?? basename(root), packageVersion: labelManifest(manifest, 'version'), gitCommit, gitDirty, detectedFiles: files.map(f => f.path), ...(source ? { source } : {}) };
   }
 
   async runAssessment(input: RunInput): Promise<AssessmentRun> {
-    if (this.active) throw new AssessmentError(409, 'An assessment is already running. Wait for it to finish.');
+    if (this.active || this.importing) throw new AssessmentError(409, 'An assessment or source fetch is already running. Wait for it to finish.');
     if (!input || typeof input.projectPath !== 'string') throw new AssessmentError(400, 'A project path is required.');
     if (input.networkMode && !['offline', 'online'].includes(input.networkMode)) throw new AssessmentError(400, 'Network mode must be offline or online.');
     const template = this.resolveRunTemplate(input);
@@ -237,14 +253,17 @@ export class AssessmentEngine {
       const requestedPaths = templateInputPaths(template);
       emit({ type: 'collection_started', message: 'Capturing the selected policy’s configured local inputs.', timestamp: stamp() });
       const captured = await this.capture(root, requestedPaths);
-      const subject = await this.describeProject(root, captured);
+      const subject = await this.describeProject(root, captured, requestedPaths);
       const manifest = parseManifest(captured.find(f => f.path === 'package.json'));
-      subject.name = labelManifest(manifest, 'name') ?? basename(subject.path);
+      subject.name = labelManifest(manifest, 'name') ?? subject.name;
       subject.packageVersion = labelManifest(manifest, 'version');
       subject.detectedFiles = captured.map(f => f.path);
       const snapshotFiles = captured.map(f => ({ path: f.path, sha256: f.sha256, bytes: f.bytes.length }));
       run = { id: randomUUID(), status: 'running', startedAt: stamp(), completedAt: null, automationCompletedAt: null, revision: 1, subject, framework: { id: template.id, name: template.name, version: String(template.version), policyDigest: template.policyDigest }, criteria: structuredClone(template.criteria), template: structuredClone(template), sourceSnapshot: { scope: 'Evidence files configured by this template, plus root package identity when present. Other project files, installed dependencies, and hosting configuration are not assessed.', digest: sha(JSON.stringify({ requestedPaths, files: snapshotFiles })), requestedPaths, files: snapshotFiles }, results: [], evidence: [], reviews: [], events: [], assessmentType: 'self-assessment', execution: { ownerPid: process.pid }, networkMode: template.networkMode, limitations: ['This is a self-assessment, not certification or an independent review.', 'Built-in checks cover root Node.js metadata; custom checks cover only their explicitly configured files and rules.', 'File presence checks do not establish security effectiveness, licence compatibility, or governance quality.', 'The source digest covers the listed assessment inputs, not every file in the repository.', 'A Git commit is contextual metadata; working-tree changes are not checked and the captured inputs may differ from that commit.'] };
       run.events.push(...preparationEvents);
+      if (subject.source?.kind === 'npm') run.limitations.push('The imported subject contains published npm package files, not a full repository. Lockfiles, governance documents, development sources and other repository files may be absent; their coverage is not inferred.');
+      if (subject.source?.kind === 'github') run.limitations.push('The imported subject is an archive pinned to a GitHub commit; Git history, submodule contents and Git LFS object availability are not established.');
+      if (subject.source?.selectedInputs === 'changed') run.limitations.push('Selected assessment inputs differ from the fetched source manifest. The recorded revision identifies fetched origin; the frozen input hashes identify what was actually assessed.');
       const assessment = run;
       const artifactRoot = join(this.dataDir, 'runs', assessment.id);
       mkdirSync(artifactRoot, { recursive: true, mode: 0o700 });
@@ -489,7 +508,8 @@ export class AssessmentEngine {
       return `<tr><td>${escapeHtml(definition?.title ?? row.criterionId)}<br><small>${escapeHtml(definition?.rule ?? '')}</small>${requirements.length ? `<p><small>Evidence requirements: ${requirements.map(escapeHtml).join('; ')}</small></p>` : ''}</td><td>${escapeHtml(row.status)}</td><td>${escapeHtml(row.rationale)}${automatic}<br><small>${escapeHtml(row.limitations.join(' '))}</small></td></tr>`;
     }).join('');
     const templateRecord = run.template ? `<h2>${run.template.version === 0 ? 'Captured one-off policy' : 'Captured template'}</h2><p>${escapeHtml(run.template.name)}${run.template.version === 0 ? '' : ` · version ${run.template.version}`} <br>Identifier: ${escapeHtml(run.template.id)}<br>Policy SHA-256: <small>${escapeHtml(run.template.policyDigest)}</small></p><details><summary>Exact policy used for this assessment</summary><pre>${escapeHtml(JSON.stringify(run.template, null, 2))}</pre></details>` : '';
-    return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(run.subject.name)} — AssessmentFootprint</title><style>body{font:16px/1.65 system-ui,sans-serif;max-width:1000px;margin:48px auto;padding:0 24px;color:#182a33;background:#faf9f6}h1{font-size:36px}h2{margin-top:32px}.tag{display:inline-block;background:#e3eee9;padding:4px 12px;border-radius:8px}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #d8dfdb;vertical-align:top}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#edf0eb;padding:16px}small{color:#53666b}</style><h1>AssessmentFootprint</h1><p class="tag">Self-assessment · ${escapeHtml(run.status)} · revision ${run.revision ?? 1}</p><h2>${escapeHtml(run.subject.name)}</h2><p>Framework: ${escapeHtml(run.framework.name)} ${escapeHtml(run.framework.version)}<br>Collected: ${escapeHtml(run.startedAt)}<br>Commit: ${escapeHtml(run.subject.gitCommit ?? 'Local folder; no repository commit recorded')}<br>Network: ${escapeHtml(run.networkMode)}</p>${templateRecord}<h2>Criterion findings</h2><table><thead><tr><th>Criterion</th><th>Result</th><th>Rationale</th></tr></thead><tbody>${findings}</tbody></table><h2>Limitations</h2><ul>${run.limitations.map(l => `<li>${escapeHtml(l)}</li>`).join('')}</ul><h2>Evidence index</h2><table><thead><tr><th>Source</th><th>Tool</th><th>SHA-256</th></tr></thead><tbody>${run.evidence.map(e => `<tr><td>${escapeHtml(e.source)}</td><td>${escapeHtml(e.toolId)} ${escapeHtml(e.toolVersion)}</td><td><small>${escapeHtml(e.sha256)}</small></td></tr>`).join('')}</tbody></table><h2>Review history</h2>${run.reviews.length ? run.reviews.map(r => `<p><strong>${escapeHtml(r.reviewer)}</strong> · ${escapeHtml(r.createdAt)} · ${escapeHtml(r.decision)}<br>${escapeHtml(r.rationale)}</p>`).join('') : '<p>No human review has been recorded.</p>'}<h2>Assessment input snapshot</h2><p>${escapeHtml(run.sourceSnapshot.scope)}</p><pre>${escapeHtml(JSON.stringify(run.sourceSnapshot, null, 2))}</pre><small>The report is a record of checks and judgments within their stated scope. It does not certify software safety or compliance.</small></html>`;
+    const sourceRecord = run.subject.source ? `<h2>Fetched source origin</h2><p>${escapeHtml(run.subject.source.kind === 'npm' ? 'Published npm package files' : 'GitHub source archive')} · ${escapeHtml(run.subject.source.name)}<br>Pinned revision: ${escapeHtml(run.subject.source.revision)}<br>Fetched: ${escapeHtml(run.subject.source.fetchedAt)}<br>Origin: ${escapeHtml(run.subject.source.url)}<br>Selected inputs: ${escapeHtml(run.subject.source.selectedInputs)}<br>Archive SHA-256: ${escapeHtml(run.subject.source.archiveSha256)}</p><pre>${escapeHtml(JSON.stringify(run.subject.source, null, 2))}</pre>` : '';
+    return `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(run.subject.name)} — AssessmentFootprint</title><style>body{font:16px/1.65 system-ui,sans-serif;max-width:1000px;margin:48px auto;padding:0 24px;color:#182a33;background:#faf9f6}h1{font-size:36px}h2{margin-top:32px}.tag{display:inline-block;background:#e3eee9;padding:4px 12px;border-radius:8px}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #d8dfdb;vertical-align:top}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#edf0eb;padding:16px}small{color:#53666b}</style><h1>AssessmentFootprint</h1><p class="tag">Self-assessment · ${escapeHtml(run.status)} · revision ${run.revision ?? 1}</p><h2>${escapeHtml(run.subject.name)}</h2><p>Framework: ${escapeHtml(run.framework.name)} ${escapeHtml(run.framework.version)}<br>Collected: ${escapeHtml(run.startedAt)}<br>Commit: ${escapeHtml(run.subject.gitCommit ?? 'Local folder; no repository commit recorded')}<br>Network: ${escapeHtml(run.networkMode)}</p>${sourceRecord}${templateRecord}<h2>Criterion findings</h2><table><thead><tr><th>Criterion</th><th>Result</th><th>Rationale</th></tr></thead><tbody>${findings}</tbody></table><h2>Limitations</h2><ul>${run.limitations.map(l => `<li>${escapeHtml(l)}</li>`).join('')}</ul><h2>Evidence index</h2><table><thead><tr><th>Source</th><th>Tool</th><th>SHA-256</th></tr></thead><tbody>${run.evidence.map(e => `<tr><td>${escapeHtml(e.source)}</td><td>${escapeHtml(e.toolId)} ${escapeHtml(e.toolVersion)}</td><td><small>${escapeHtml(e.sha256)}</small></td></tr>`).join('')}</tbody></table><h2>Review history</h2>${run.reviews.length ? run.reviews.map(r => `<p><strong>${escapeHtml(r.reviewer)}</strong> · ${escapeHtml(r.createdAt)} · ${escapeHtml(r.decision)}<br>${escapeHtml(r.rationale)}</p>`).join('') : '<p>No human review has been recorded.</p>'}<h2>Assessment input snapshot</h2><p>${escapeHtml(run.sourceSnapshot.scope)}</p><pre>${escapeHtml(JSON.stringify(run.sourceSnapshot, null, 2))}</pre><small>The report is a record of checks and judgments within their stated scope. It does not certify software safety or compliance.</small></html>`;
   }
   close(): void { this.db.close(); }
 

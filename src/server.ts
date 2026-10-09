@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import type { AssessmentRun, CriterionDefinition, ProjectInfo, ReviewInput, RunInput, RunSummary, TemplateSummary, TemplateVersion, ToolDefinition, WorkflowResponse, FlowSelection, FlowPreviewInput, FlowPreview, RunStreamPacket } from './types.ts';
+import type { AssessmentRun, CriterionDefinition, ProjectInfo, ReviewInput, RunInput, RunSummary, TemplateSummary, TemplateVersion, ToolDefinition, WorkflowResponse, FlowSelection, FlowPreviewInput, FlowPreview, RunStreamPacket, SourceImportInput, SourceImportResult } from './types.ts';
 
 export interface ServerEngine {
   getCatalog(): CriterionDefinition[];
@@ -21,6 +21,7 @@ export interface ServerEngine {
   importTemplate(document: unknown): TemplateVersion;
   getWorkflow(runId: string): WorkflowResponse | Promise<WorkflowResponse>;
   previewFlow(input: FlowPreviewInput): FlowPreview;
+  importProject(input: SourceImportInput): Promise<SourceImportResult>;
 }
 
 const bodyLimit = 64 * 1024;
@@ -233,6 +234,11 @@ export async function startServer(options: { engine: ServerEngine; projectPath: 
       if (req.method === 'POST' && url.pathname === '/api/projects/inspect') {
         const body = await readJson(req);
         return json(res, 200, await engine.inspectProject(textField(body, 'projectPath')));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/projects/import') {
+        const body = await readJson(req);
+        if (body.kind !== 'github' && body.kind !== 'npm') throw new HttpError(400, 'kind must be github or npm.');
+        return json(res, 201, await engine.importProject({ kind: body.kind, source: textField(body, 'source', 2048) }));
       }
       if (req.method === 'POST' && url.pathname === '/api/flow/preview') {
         const body = await readJson(req);

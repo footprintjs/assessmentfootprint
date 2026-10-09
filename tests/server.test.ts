@@ -31,6 +31,7 @@ function fixture() {
     saveTemplate: () => { throw new Error('No fixture template has been defined.'); }, importTemplate: () => { throw new Error('No fixture template has been defined.'); },
     getWorkflow: () => ({ kind: 'unavailable', note: 'This fixture does not include a recorded workflow.' }),
     previewFlow: () => { throw new Error('No fixture flow preview has been defined.'); },
+    importProject: async () => { throw new Error('No fixture source import has been defined.'); },
   };
   return { engine, run, inputs, reviews };
 }

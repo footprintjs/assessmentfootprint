@@ -1,6 +1,6 @@
 # AssessmentFootprint
 
-A local software assessment workbench that keeps reusable policies, findings, their evidence, and human judgments together. Create a saved assessment template, choose a project folder, run its scoped checks, inspect the original evidence, record required human reviews, and export the result.
+A local software assessment workbench that keeps reusable policies, findings, their evidence, and human judgments together. Create a saved assessment template, choose a local folder or fetch a public GitHub repository or npm package, run its scoped checks, inspect the original evidence, record required human reviews, and export the result.
 
 The browser and CLI use the same assessment engine and saved templates. There is no hosted service, account, GitHub token, or paid model dependency. The built-in template assesses selected documents and lockfiles of a root Node.js package. Custom templates can configure bounded file/JSON checks, supported lockfile scans, and expert judgments; they do not turn a selected folder into a complete software-system assessment. The default template is offline; a saved template controls its own offline/online profile.
 
@@ -18,6 +18,16 @@ npm start -- /absolute/path/to/project
 `npm ci` installs this workbench's dependencies. The assessed project is never installed by the assessment engine. Node runs the engine and CLI TypeScript source directly. The browser replay viewer uses a locally bundled React application; this checkout includes its generated assets and does not load libraries from a CDN. After changing viewer source or dependencies, rebuild those assets with `npm run build:viewer` before launching Studio.
 
 Studio opens a local browser page and prints its address. The server listens on `127.0.0.1`, using a free port unless one is specified. Stop it with Ctrl+C.
+
+### First trial
+
+1. Start Studio using the instructions above. A local folder is optional: `npm start` opens the workbench with the current folder selected.
+2. In **Project source**, keep **Local folder**, or select **GitHub repository** / **npm package** and choose **Fetch project**. For example, enter a public repository URL or `footprintjs@9.44.1`. A remote source is downloaded to this computer before assessment.
+3. Keep the built-in **Local open-source readiness** template for the first run. Click a stage in the vertical chart to see its rule and evidence requirements, then choose **Run assessment**.
+4. Inspect the findings, source scope, original evidence, and **What happened?** replay. Missing files or an unavailable scanner remain visible as negative or incomplete findings. The governance stage waits for a human review.
+5. Export HTML or JSON when ready to share the assessment. These exports contain source paths and supplied reviewer details, so inspect them before sharing.
+
+No model, API key, account, or cloud service is needed for these built-in checks. GitHub/npm fetching needs an Internet connection; file checks run locally, and offline vulnerability checks additionally need the optional scanner and its prepared advisory database. The public link selects **what to assess**, not where the assessment runs.
 
 ```sh
 npm start -- /absolute/path/to/project --port 4317 --no-open
@@ -74,13 +84,27 @@ A completed run means that the selected checks finished. It can still contain ne
 
 ## Flow workspace
 
-Studio opens a connected flowchart built by the same FootprintJS chart definition that runs the checks. Choose a local project and a published template, then click a node to inspect its rule, evidence paths, tool, and review requirement. Pan, zoom, or fit the chart; the stage selector provides a keyboard alternative. Arrows show the actual sequential evaluation order, not causal dependencies between findings.
+Studio opens a connected flowchart built by the same FootprintJS chart definition that runs the checks. Choose a project source and a published template, then click a node to inspect its rule, evidence paths, tool, and review requirement. The chart reads from top to bottom at a readable scale, with downward arrows and a stage inspector alongside it on wider screens. Scroll the page to follow the sequence; drag to pan, use the zoom buttons, or fit the chart. The stage selector provides a keyboard alternative. On narrow screens, selecting a stage brings its inspector into view, with **Back to flow** to return. Arrows show the actual sequential evaluation order, not causal dependencies between findings.
 
 Choose **Configure stage** or **Edit flow** to use the template editor in the side inspector. The initial node opens flow settings; a criterion node opens its rule and collector controls. Copies of the built-in policy become custom drafts. Draft edits are validated by the engine and must be published before running. **Publish flow** selects the returned exact version. Older versions and runs remain unchanged; editing an older saved version cannot silently replace a newer one. **Leave draft** retains the unfinished editor in Templates and restores the workspace's selected published method.
 
 **Run assessment** freezes that selected policy and displays actual engine events on the nodes. File capture is shown as an activity before the evaluation chart, not as a fabricated chart stage. A node's execution state and current criterion finding are separate: a finished check can be negative or inconclusive. Fast steps can finish between browser repaints; the saved replay retains their execution order. The report opens when automation ends, with human review still pending where required.
 
 From a report, **View recorded flow** loads its stored, integrity-checked chart. Its finding badges show current judgments, including subsequent human review; **Open report & replay** exposes the original recorded evaluation state and time-travel controls. Older runs without chart structure retain their existing fallback. A lost live connection does not cancel or automatically restart the local assessment; inspect its saved report or Run history before starting another.
+
+## GitHub and npm sources
+
+In Studio, choose **GitHub repository** or **npm package** under **Project source**, enter a public link, and choose **Fetch project**. Fetching explicitly uses the Internet and saves files in this workspace's data directory. The subsequent assessment uses the same local engine and selected template network policy as a local-folder run; fetching does not switch an offline template to online mode. No assessed-package installation, dependency installation, build, or lifecycle script runs.
+
+A GitHub source is resolved to an exact commit before its archive is downloaded. An npm source is resolved to an exact published version; the download is checked against the registry's integrity metadata. The source pin and archive SHA-256 are retained with the project and report. The assessment still freezes and hashes its selected input files independently. If those selected files have changed locally since download, the report identifies that difference instead of treating the original pin as proof of the assessed bytes.
+
+An npm package is its **published archive**, which may omit repository source, tests, documentation, or lockfiles. Missing files are findings about that archive, not proof that the development repository lacks them. A GitHub archive contains a single revision without Git history or a recursive checkout of submodules. Private sources, custom registries, and authentication tokens are not supported; use an existing local checkout for those. Fetched folders remain available locally for later assessments.
+
+## Tool configuration direction
+
+Current collectors use local files and an optional locally installed OSV-Scanner. A future tool adapter could offer **Local installation** or **Remote API**, with local availability checks for the first and an endpoint plus an optional credential reference for the second. Remote assessment services are a planned extension, not a current feature.
+
+That extension should keep credentials out of shared templates, evidence, and exported reports; declare the inputs sent to the service; require a network-enabled assessment policy; and retain the actual service response and tool identity as evidence. The same rules for missing evidence and human review must apply to either tool location. See the [architecture notes](docs/architecture.md#future-remote-tool-adapters) for the intended boundary.
 
 ## Saved templates
 

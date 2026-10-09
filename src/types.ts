@@ -75,7 +75,25 @@ export interface ProjectInfo {
   gitCommit: string | null;
   gitDirty: boolean | null;
   detectedFiles: string[];
+  source?: ProjectSource;
 }
+export interface ProjectSource {
+  kind: 'github' | 'npm';
+  requested: string;
+  url: string;
+  name: string;
+  revision: string;
+  reference: string;
+  fetchedAt: string;
+  archiveSha256: string;
+  integrity: string | null;
+  fileCount: number;
+  extractedBytes: number;
+  selectedInputs: 'unchanged' | 'changed';
+  changedPaths: string[];
+}
+export interface SourceImportInput { kind: 'github' | 'npm'; source: string }
+export interface SourceImportResult { project: ProjectInfo; source: ProjectSource }
 export interface EvidenceRecord {
   id: string;
   toolId: string;

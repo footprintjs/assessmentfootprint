@@ -17,6 +17,10 @@ runs/
   <run-id>/
     inputs/             frozen selected input documents and lockfiles
     <evidence-id>.txt    raw source, scanner output/diagnostics, or workflow JSON
+imports/
+  <import-id>/
+    project/            files from the fetched source archive
+    source.json         local source receipt and file manifest
 ```
 
 Run IDs and evidence IDs are UUIDs. Reports reference these stored artifacts rather than embedding every raw file. A JSON export is an assessment record, not a self-contained evidence archive.
@@ -32,6 +36,18 @@ The engine import accepts an exported manifest or a draft, revalidates its confi
 `resolveRunTemplate` selects a saved manifest and optional exact version. A saved run cannot also choose one-off criterion IDs or a different network profile. Omitting a pinned version selects the latest at run creation. Ad-hoc built-in criterion selection remains supported; its configuration is captured as a one-off policy rather than published as a saved template version.
 
 ## Collection and source snapshot
+
+### Explicit source acquisition
+
+`src/source-import.ts` resolves public GitHub and npm sources into managed local folders. Studio calls the authenticated `POST /api/projects/import` with `{kind: "github" | "npm", source: string}` only after **Fetch project**. A GitHub repository URL resolves its default branch through the official API and fetches the exact commit archive from GitHub's archive host. An npm package name or npmjs.com package URL resolves `latest` or an exact version through the official registry, then verifies the archive against a supported registry integrity digest. Version ranges, private repositories, alternate registries, and arbitrary download URLs are unsupported.
+
+Requests use HTTPS, bounded response bodies and timeouts, explicit redirects checked against supported official endpoints, and no authentication credentials. Gzip/tar parsing is local through the pinned `tar` parser, followed by application-owned writes of validated regular files and directories. Links, special entries, path traversal, Git control files, portable-path violations, and colliding paths are rejected. Default limits are 32 MiB compressed download, 128 MiB expanded archive, 16 MiB per file, and 5,000 entries. Imports use unique staging directories and only become available after extraction succeeds. No shell, project installation, lifecycle hook, or project command is involved.
+
+The sibling `source.json` receipt records the source URL, exact pin, archive hash, fetched time, and regular-file manifest outside the downloaded project tree. When imported files are reused, selected captured inputs are compared with that baseline; the run retains whether these inputs changed and which paths differ. This comparison covers the selected assessment inputs, not a claim that every imported file remains unchanged. A source pin describes downloaded origin, while the ordinary input digest describes bytes actually assessed. The receipt is local metadata, not a signed or independently authenticated attestation.
+
+Acquisition uses the Internet independently of the template's assessment network profile. Once fetched, the same collectors operate on the managed local folder. npm findings apply to the published archive, which may omit development-repository files. GitHub archives are one revision without history or a recursive submodule checkout. These source limitations are retained in reports.
+
+### Captured assessment inputs
 
 The engine resolves the selected local project folder and captures the selected policy's explicit input paths, plus root `package.json` when present for subject identity. The built-in policy uses root manifests/lockfiles/licence documents and root or `.github` assessment documents. Custom policies can select nested files without recursively scanning unrelated packages. Requested paths are retained even when a file is absent, so scope does not disappear merely because no bytes were captured.
 
@@ -83,7 +99,7 @@ Exports verify every referenced evidence artifact and frozen input against its r
 
 `src/chart.ts` supplies the one FootprintJS builder used for both preview and execution. `AssessmentEngine.previewFlow` resolves an exact saved selection or normalizes an unpublished draft, builds structure without running stages or accessing the assessed project, and returns normalized criteria/policy with the serialized structure. `POST /api/flow/preview` uses the same session/origin/body limits as the other local JSON routes. It never publishes a template.
 
-`client/workspace.tsx` reconstructs nodes and actual edges with Explainable UI's `graphFromStructure`, then renders an interactive React Flow canvas with an accessible stage selector. A compact wrapping layout changes positions only. Draft selection and execution state are independent; events, result badges, and the inspector preserve completion versus satisfaction. The vanilla shell reuses the existing template form and serialization for node configuration, guards stale preview responses, and requires a published version for execution. The publish operation pins the loaded version as its concurrency guard; an older selection conflicts if a newer version exists. The report and the original Explainable UI replay remain separate views of the run.
+`client/workspace.tsx` reconstructs nodes and actual edges with Explainable UI's `graphFromStructure`, then renders an interactive React Flow canvas with an accessible stage selector. A vertical layout changes positions only: single-path charts retain builder order and downward edges, and other structures use the existing directed layout adapter from top to bottom. The canvas grows with the sequence at a readable scale; ordinary scrolling moves the page, while explicit zoom controls and drag panning remain available. Selection and progress updates preserve the viewport. Draft selection and execution state are independent; events, result badges, and the inspector preserve completion versus satisfaction. The vanilla shell reuses the existing template form and serialization for node configuration, guards stale preview responses, and requires a published version for execution. The publish operation pins the loaded version as its concurrency guard; an older selection conflicts if a newer version exists. The report and the original Explainable UI replay remain separate views of the run.
 
 `POST /api/runs/stream` accepts the same run input as `POST /api/runs` and delivers bounded NDJSON event packets followed by the saved result or an error. Collection events before run creation have no run ID; once allocated, the exact engine run ID accompanies events. Seed-stage start comes from the chart callback; completion comes from FootprintJS onStageExecuted after its commit, while criterion completion packets may include the persisted result. This replaces the browser's former project-path/history polling heuristic. Collection events are ordinary run activity, outside the scope and timing of the saved evaluation recording. Subscriber exceptions, slow readers, and disconnection cannot cancel the engine. The client never retries the mutating request automatically and treats the final persisted run as authoritative.
 
@@ -95,4 +111,12 @@ The browser can change which local project folder is inspected; the server is no
 
 ## Deliberate first-version boundaries
 
-Saved templates configure the registered rule forms and collectors; they are not a general programmable workflow/DSL or custom command runner. There are no npm-audit/Scorecard adapters, remote repository checks, clone operation, general multi-language inventory, automatic workspace discovery, LLM judging, authenticated reviewer directory, or hosted collaboration. Adding these capabilities must retain explicit source coverage, criterion versioning, real tool outcomes, immutable published policies, and missing-evidence states rather than broadening claims from the existing checks.
+Saved templates configure the registered rule forms and collectors; they are not a general programmable workflow/DSL or custom command runner. Source acquisition downloads public archives for local checks; it does not inspect remote hosting settings, issues, or repository history. There are no npm-audit/Scorecard adapters, Git clone operation, general multi-language inventory, automatic workspace discovery, LLM judging, authenticated reviewer directory, or hosted collaboration. Adding these capabilities must retain explicit source coverage, criterion versioning, real tool outcomes, immutable published policies, and missing-evidence states rather than broadening claims from the existing checks.
+
+## Future remote tool adapters
+
+This is design direction only. Today `project-files` and `osv-scanner` remain the registered collectors; no remote execution endpoint or API-key field is implemented. Source acquisition and tool execution are separate choices: selecting a GitHub/npm subject does not move assessment to a hosted service.
+
+A future registered adapter can describe two execution locations: a locally installed executable, with passive availability/version probing and installation guidance, or a remote API, with a server-side endpoint configuration and an optional credential reference. Shared template manifests should identify the adapter and validated assessment options; machine-specific paths, endpoints, and secrets should be managed by local tool configuration. Credentials should use an appropriate local secret store, never browser storage, template JSON, logs, evidence records, or exports. The UI should show availability and the declared network/data scope before a run.
+
+Remote adapters must enforce the selected network policy, explicit destination and payload scope, bounded requests/responses, authentication redaction, redirect and local-network protections, and cancellation/timeouts. They must preserve the actual response, request scope, service/tool version when available, and coverage limitations. An unreachable service, missing credential, unsupported response, or unknown input coverage must yield an unavailable tool or incomplete/error finding, never a passing check. Service-generated conclusions need their own versioned interpretation rule and must remain distinct from human judgments. No generic arbitrary-URL proxy or remote shell command is implied by this extension.

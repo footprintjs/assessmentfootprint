@@ -37,10 +37,9 @@ type StageData = Record<string, unknown> & {
   chosen: boolean;
 };
 type StageNode = Node<StageData>;
-const NODE_WIDTH = 214;
-const NODE_HEIGHT = 126;
-const COLUMN_GAP = 46;
-const ROW_GAP = 50;
+const NODE_WIDTH = 300;
+const NODE_HEIGHT = 112;
+const ROW_GAP = 32;
 const MAX_STAGES = 128;
 const findingLabels: Record<CriterionStatus, string> = {
   satisfied: 'Satisfied',
@@ -53,7 +52,7 @@ const traversalLabels: Record<TraversalState, string> = {
   configured: 'Configured', waiting: 'Not started', running: 'Running',
   completed: 'Completed', interrupted: 'Interrupted', unrecorded: 'Event not recorded',
 };
-const directedLayout = createDagreTraceLayout({ direction: 'LR', nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT, rankSep: 60, nodeSep: 42 });
+const directedLayout = createDagreTraceLayout({ direction: 'TB', nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT, rankSep: 60, nodeSep: 42 });
 
 function criterionType(criterion?: CriterionDefinition): string {
   if (!criterion) return 'Evaluation state';
@@ -78,7 +77,7 @@ function traversalState(id: string, options: WorkspaceOptions): TraversalState {
   return state === 'running' && options.mode === 'interrupted' ? 'interrupted' : state;
 }
 
-// Wrapping is only a visual placement of a verified single path. Original
+// Vertical placement preserves the verified path. Original
 // stage identifiers and directed edges always come from the builder structure.
 function singlePath(graph: TraceGraph): string[] | null {
   if (!graph.nodes.length || graph.edges.length !== graph.nodes.length - 1) return null;
@@ -103,31 +102,19 @@ function singlePath(graph: TraceGraph): string[] | null {
   return order.length === graph.nodes.length ? order : null;
 }
 
-function placedGraph(graph: TraceGraph): { graph: TraceGraph; order: string[]; wrapped: boolean } {
+function placedGraph(graph: TraceGraph): { graph: TraceGraph; order: string[] } {
   const order = singlePath(graph);
-  if (!order) return { graph: directedLayout(graph), order: graph.nodes.map(node => node.id), wrapped: false };
+  if (!order) return { graph: directedLayout(graph), order: graph.nodes.map(node => node.id) };
   const indices = new Map(order.map((id, index) => [id, index]));
-  const columns = Math.min(3, order.length);
-  const nodes = graph.nodes.map(node => {
-    const index = indices.get(node.id)!;
-    const row = Math.floor(index / columns);
-    const column = row % 2 === 0 ? index % columns : columns - 1 - index % columns;
-    return { ...node, position: { x: column * (NODE_WIDTH + COLUMN_GAP), y: row * (NODE_HEIGHT + ROW_GAP) } };
-  });
-  const positions = new Map(nodes.map(node => [node.id, node.position]));
-  const edges = graph.edges.map(edge => {
-    const source = positions.get(edge.source)!;
-    const target = positions.get(edge.target)!;
-    const down = target.y > source.y;
-    return { ...edge, sourceHandle: down ? 'out-bottom' : target.x > source.x ? 'out-right' : 'out-left', targetHandle: down ? 'in-top' : target.x > source.x ? 'in-left' : 'in-right' };
-  });
-  return { graph: { nodes, edges }, order, wrapped: order.length > columns };
+  const nodes = graph.nodes.map(node => ({ ...node, position: { x: 0, y: indices.get(node.id)! * (NODE_HEIGHT + ROW_GAP) } }));
+  const edges = graph.edges.map(edge => ({ ...edge, sourceHandle: 'out-bottom', targetHandle: 'in-top' }));
+  return { graph: { nodes, edges }, order };
 }
 
 function AssessmentNode({ data }: NodeProps<StageNode>) {
   return (
     <div className={`af-workspace-node traversal-${data.traversal}${data.chosen ? ' is-chosen' : ''}`} title={data.label}>
-      {[['left', Position.Left], ['right', Position.Right], ['top', Position.Top], ['bottom', Position.Bottom]].map(([side, position]) => (
+      {[['top', Position.Top], ['bottom', Position.Bottom]].map(([side, position]) => (
         <React.Fragment key={side}>
           <Handle id={`in-${side}`} type="target" position={position as Position} isConnectable={false} />
           <Handle id={`out-${side}`} type="source" position={position as Position} isConnectable={false} />
@@ -170,15 +157,22 @@ function WorkspaceCanvas({ nodes, edges, topologyKey, onSelect }: { nodes: Stage
   const fit = useCallback(() => {
     if (size.width > 0 && size.height > 0) setViewport(getViewportForBounds(bounds, size.width, size.height, 0.08, 1, 0.10));
   }, [bounds, size.width, size.height]);
-  useEffect(fit, [fit]);
-  return <div className="af-workspace-canvas" ref={canvas}>
+  // Give the sequence its own page height at readable zoom. Selection and
+  // progress updates leave the viewport alone; only a changed path or width
+  // resets this reading view. Fit remains an explicit overview action.
+  const readingZoom = size.width > 0 ? Math.min(1, Math.max(0.08, (size.width - 32) / Math.max(bounds.width, 1))) : 1;
+  const readingHeight = Math.max(430, Math.ceil(bounds.height * readingZoom + 80));
+  useEffect(() => {
+    if (size.width > 0) setViewport({ x: (size.width - bounds.width * readingZoom) / 2 - bounds.x * readingZoom, y: 24 - bounds.y * readingZoom, zoom: readingZoom });
+  }, [bounds, size.width, readingZoom]);
+  return <div className="af-workspace-canvas" ref={canvas} style={{ height: readingHeight }}>
     <ReactFlow
       nodes={nodes} edges={edges} nodeTypes={nodeTypes}
       viewport={viewport} onViewportChange={setViewport}
       onNodeClick={(_event, node) => onSelect(node.id)}
       nodesDraggable={false} nodesConnectable={false} edgesReconnectable={false}
       deleteKeyCode={null} selectionOnDrag={false} selectNodesOnDrag={false}
-      minZoom={0.08} maxZoom={1.75} panOnScroll zoomOnDoubleClick={false}
+      minZoom={0.08} maxZoom={1.75} panOnScroll={false} zoomOnScroll={false} preventScrolling={false} zoomOnDoubleClick={false}
       proOptions={{ hideAttribution: true }}
       ariaLabelConfig={{ 'node.a11yDescription.default': 'Select a stage to inspect or configure it. Use the stage selector above as a keyboard alternative.', 'controls.ariaLabel': 'Chart view controls' }}
     >
@@ -227,7 +221,7 @@ function Workspace(options: WorkspaceOptions) {
     const completed = source?.data.traversal === 'completed' && target?.data.traversal === 'completed';
     const color = completed ? '#357567' : '#374d61';
     return {
-      ...edge, type: 'smoothstep', sourceHandle: edge.sourceHandle || 'out-right', targetHandle: edge.targetHandle || 'in-left',
+      ...edge, type: 'smoothstep', sourceHandle: edge.sourceHandle || 'out-bottom', targetHandle: edge.targetHandle || 'in-top',
       animated: false, interactionWidth: 14,
       markerEnd: { type: MarkerType.ArrowClosed, color, width: 22, height: 22 },
       style: { ...edge.style, stroke: color, strokeWidth: 2.6 },
@@ -237,7 +231,7 @@ function Workspace(options: WorkspaceOptions) {
   const modeLabel = options.mode === 'draft' ? 'Configuration' : options.mode === 'running' ? 'Live evaluation' : options.mode === 'interrupted' ? 'Interrupted evaluation' : 'Recorded evaluation';
   return (
     <section className="af-workspace" aria-label="Assessment flowchart">
-      <div className="af-workspace-toolbar"><div><strong>{modeLabel}</strong><span>{nodes.length} connected stages · {built.wrapped ? 'continues on the next row' : 'follow the arrows'}</span></div><label htmlFor={pickerId}>Select stage<select id={pickerId} value={options.selectedId || ''} onChange={event => { if (event.currentTarget.value) options.onSelect(event.currentTarget.value); }}><option value="">Choose a stage</option>{built.order.map(id => <option key={id} value={id}>{(indices.get(id) ?? 0) + 1}. {nodeById.get(id)?.data.label}</option>)}</select></label></div>
+      <div className="af-workspace-toolbar"><div><strong>{modeLabel}</strong><span>{nodes.length} connected stages · read from top to bottom</span></div><label htmlFor={pickerId}>Select stage<select id={pickerId} value={options.selectedId || ''} onChange={event => { if (event.currentTarget.value) options.onSelect(event.currentTarget.value); }}><option value="">Choose a stage</option>{built.order.map(id => <option key={id} value={id}>{(indices.get(id) ?? 0) + 1}. {nodeById.get(id)?.data.label}</option>)}</select></label></div>
       <WorkspaceCanvas nodes={nodes} edges={edges} topologyKey={topologyKey} onSelect={options.onSelect} />
       <div className="af-workspace-legend"><span><i className="legend-running" />Running</span><span><i className="legend-completed" />Stage completed</span><span><i className="legend-selected" />Selected for inspection</span><span className="af-workspace-legend-note">Completion describes traversal. Current findings are separate.</span></div>
       <p className="af-workspace-scope">Arrows come from the assessment builder. Project input capture happens before this evaluation; attributed human review is separate.</p>

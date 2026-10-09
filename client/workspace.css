@@ -1,55 +1,60 @@
-.af-workspace { color: #233a4c; width: 100%; min-width: 0; }
+.af-workspace { color: #162a40; width: 100%; min-width: 0; }
 .af-workspace-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 18px; margin: 0 0 14px; }
 .af-workspace-toolbar > div { display: grid; gap: 4px; }
-.af-workspace-toolbar strong { font-size: 15px; font-weight: 650; }
-.af-workspace-toolbar > div > span { color: #687580; font-size: 12px; }
-.af-workspace-toolbar label { display: grid; gap: 4px; color: #657580; font-size: 11px; font-weight: 600; max-width: 270px; }
-.af-workspace-toolbar select { max-width: 270px; width: 100%; color: #233a4c; background: #fff; border: 1px solid #cbd5d9; border-radius: 8px; padding: 7px 26px 7px 9px; font: inherit; font-size: 12px; }
-.af-workspace-canvas { height: 520px; min-height: 430px; width: 100%; border: 1px solid #ced7da; border-radius: 13px; background: #f6f8f7; overflow: hidden; position: relative; }
-.af-workspace-canvas .react-flow__node { cursor: pointer; border-radius: 11px; }
-.af-workspace-canvas .react-flow__node:focus-visible { outline: 3px solid #356ea0; outline-offset: 6px; }
+.af-workspace-toolbar strong { font-size: 15px; font-weight: 700; letter-spacing: -.15px; }
+.af-workspace-toolbar > div > span { color: #626b72; font-size: 12px; }
+.af-workspace-toolbar label { display: grid; gap: 4px; color: #59656d; font-size: 11px; font-weight: 600; max-width: 270px; }
+.af-workspace-toolbar select { max-width: 270px; width: 100%; color: #162a40; background: #fff; border: 1px solid #d4d0c6; border-radius:4px; padding: 7px 26px 7px 9px; font: inherit; font-size: 12px; }
+.af-workspace-canvas { height: 520px; min-height: 430px; width: 100%; border: 1px solid #d4d0c6; border-radius:4px; background: #f3f0e8; overflow: hidden; position: relative; }
+.af-workspace-canvas .react-flow__node { cursor: pointer; border-radius:4px; }
+.af-workspace-canvas .react-flow__node:focus-visible { outline: 3px solid #2752ad; outline-offset: 6px; }
 .af-workspace-canvas .react-flow__edge-path { stroke-linecap: round; }
-.af-workspace-node { width: 300px; height: 112px; box-sizing: border-box; border: 1.5px solid #bccad0; border-radius: 11px; background: #fff; box-shadow: 0 3px 9px #24384a0b; padding: 8px 12px; font-family: inherit; display: flex; flex-direction: column; transition: border-color 120ms, box-shadow 120ms; }
-.af-workspace-node:hover { border-color: #708e99; box-shadow: 0 4px 12px #24384a15; }
-.af-workspace-node.traversal-running { border-color: #b47929; background: #fffaf0; }
-.af-workspace-node.traversal-completed { border-color: #80a79d; }
-.af-workspace-node.traversal-interrupted { border-color: #b46c50; background: #fff9f5; }
-.af-workspace-node.is-chosen { outline: 3px solid #426c9b; outline-offset: 3px; box-shadow: 0 4px 14px #426c9b20; }
-.af-workspace-node .react-flow__handle { width: 7px; height: 7px; border: 1.5px solid #f6f8f7; background: #506978; }
-.af-workspace-node-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; height: 15px; flex-shrink: 0; }
-.af-workspace-node-order { color: #8b9aa2; font-size: 10px; font-weight: 650; }
-.af-workspace-traversal { font-size: 10px; color: #667983; display: flex; gap: 5px; align-items: center; white-space: nowrap; }
-.af-workspace-traversal > span { width: 5px; height: 5px; border-radius: 50%; background: #a7b4ba; }
-.traversal-running .af-workspace-traversal { color: #8a581d; }
-.traversal-running .af-workspace-traversal > span { background: #b47b25; }
-.traversal-completed .af-workspace-traversal { color: #357567; }
-.traversal-completed .af-workspace-traversal > span { background: #357567; }
-.traversal-interrupted .af-workspace-traversal { color: #995537; }
-.traversal-interrupted .af-workspace-traversal > span { background: #995537; }
-.af-workspace-node-title { color: #223b4c; font-size: 15px; line-height: 1.15; font-weight: 650; margin-top: 5px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 30px; }
-.af-workspace-node-tool { color: #73828a; font-size: 10px; line-height: 1.3; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin: 3px 0 4px; }
-.af-workspace-node-finding { margin-top: auto; display: flex; justify-content: space-between; gap: 4px; align-items: center; border-top: 1px solid #edf0ef; padding-top: 6px; min-height: 17px; }
-.af-workspace-finding-label { color: #77858b; font-size: 8px; white-space: nowrap; }
-.af-workspace-finding { font-size: 9px; font-weight: 600; line-height: 1.3; border-radius: 4px; padding: 3px 5px; background: #eef2f3; color: #5a6b77; white-space: nowrap; }
-.af-workspace-finding.finding-satisfied { background: #e9f4ee; color: #306b50; }
-.af-workspace-finding.finding-not_satisfied { background: #f9e9e4; color: #9b4f3d; }
-.af-workspace-finding.finding-insufficient_evidence { background: #fff2d8; color: #8d6a2a; }
-.af-workspace-finding.finding-evaluation_error { background: #f9e9e4; color: #9b4f3d; }
-.af-workspace-no-finding { color: #8a969c; font-size: 10px; }
-.af-workspace-canvas-controls { position: absolute; left: 14px; bottom: 14px; z-index: 10; display: flex; align-items: center; gap: 1px; padding: 3px; border: 1px solid #cbd5da; border-radius: 9px; background: #ffffffed; box-shadow: 0 3px 8px #2a425810; }
-.af-workspace-canvas-controls button { width: 30px; height: 30px; padding: 0; border: 0; border-radius: 5px; color: #324e63; background: transparent; cursor: pointer; font-size: 19px; }
-.af-workspace-canvas-controls button:hover { background: #edf2f3; }
-.af-workspace-canvas-controls .af-workspace-fit { width: auto; padding: 0 9px; font-size: 11px; font-weight: 600; border-left: 1px solid #e2e7e9; border-radius: 0 5px 5px 0; margin-left: 3px; }
-.af-workspace button:focus-visible, .af-workspace select:focus-visible { outline: 3px solid #426c9b; outline-offset: 3px; }
-.af-workspace-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 16px; color: #667a86; margin-top: 13px; font-size: 11px; }
+.af-workspace-node { width: 300px; height: 112px; box-sizing: border-box; border: 1px solid #c5c2b9; border-radius:4px; background: #fff; box-shadow: 0 3px 9px #162a4009; padding: 8px 12px; font-family: inherit; display: flex; flex-direction: column; transition: border-color 120ms, box-shadow 120ms; }
+.af-workspace-node:hover { border-color: #9b7445; box-shadow: 0 4px 12px #162a4012; }
+.af-workspace-node.traversal-running { border-color: #a7792b; background: #fffaf0; }
+.af-workspace-node.traversal-completed { border-color: #7b9d88; }
+.af-workspace-node.traversal-interrupted { border-color: #ad4d43; background: #fff6f3; }
+.af-workspace-node.is-chosen { outline: 3px solid #2752ad; outline-offset: 3px; box-shadow: 0 4px 14px #2752ad18; }
+.af-workspace-node .react-flow__handle { width: 7px; height: 7px; border: 1.5px solid #f3f0e8; background: #162a40; }
+.af-workspace-node-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; height: 16px; flex-shrink: 0; }
+.af-workspace-node-order { color: #795b37; font-size: 11px; font-weight: 750; line-height: 12px; min-width: 25px; padding: 1px 5px; background: #f8f5ee; border: 1px solid #dfd6c8; border-radius: 3px; font-variant-numeric: tabular-nums; text-align: center; }
+.af-workspace-traversal { font-size: 10.5px; color: #626b72; display: flex; gap: 5px; align-items: center; white-space: nowrap; }
+.af-workspace-traversal > span { width: 5px; height: 5px; border-radius:50%; background: #919895; }
+.traversal-running .af-workspace-traversal { color: #895e1d; }
+.traversal-running .af-workspace-traversal > span { background: #a7792b; }
+.traversal-completed .af-workspace-traversal { color: #37684d; }
+.traversal-completed .af-workspace-traversal > span { background: #37684d; }
+.traversal-interrupted .af-workspace-traversal { color: #9b4038; }
+.traversal-interrupted .af-workspace-traversal > span { background: #9b4038; }
+.af-workspace-node-title { color: #162a40; font-size: 15px; line-height: 1.12; font-weight: 700; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 32px; }
+.af-workspace-node-tool { color: #616b73; font-size: 10.5px; line-height: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin: 2px 0 3px; }
+.af-workspace-node-finding { margin-top: auto; display: flex; justify-content: space-between; gap: 6px; align-items: center; border-top: 1px solid #e4e0d7; padding-top: 4px; min-height: 21px; }
+.af-workspace-finding-label { color: #59656d; font-size: 9px; white-space: nowrap; }
+.af-workspace-finding { font-size: 9.5px; font-weight: 650; line-height: 12px; border-radius: 3px; padding: 1px 5px; background: #efefec; color: #5d666d; white-space: nowrap; border: 1px solid transparent; }
+.af-workspace-finding.finding-satisfied { background: #edf4ee; color: #37684d; }
+.af-workspace-finding.finding-not_satisfied { background: #fbefeb; color: #9b4038; }
+.af-workspace-finding.finding-insufficient_evidence { background: #fff5df; color: #895e1d; }
+.af-workspace-finding.finding-evaluation_error { background: #fbefeb; color: #9b4038; }
+.af-workspace-no-finding { color: #626b72; font-size: 10.5px; }
+.af-workspace-canvas-controls { position: absolute; left: 14px; bottom: 14px; z-index: 10; display: flex; align-items: center; gap: 1px; padding: 3px; border: 1px solid #d4d0c6; border-radius:4px; background: #fffffff2; box-shadow: 0 3px 8px #162a4010; }
+.af-workspace-canvas-controls button { width: 30px; height: 30px; padding: 0; border: 0; border-radius:5px; color: #2752ad; background: transparent; cursor: pointer; font-size: 19px; }
+.af-workspace-canvas-controls button:hover { background: #edf1fb; }
+.af-workspace-canvas-controls .af-workspace-fit { width: auto; padding: 0 9px; font-size: 11px; font-weight: 600; border-left: 1px solid #e4e0d7; border-radius:0 5px 5px 0; margin-left: 3px; }
+.af-workspace button:focus-visible, .af-workspace select:focus-visible { outline: 3px solid #2752ad; outline-offset: 3px; }
+.af-workspace-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 16px; color: #59656d; margin-top: 13px; font-size: 11px; }
 .af-workspace-legend > span { display: flex; align-items: center; gap: 6px; }
-.af-workspace-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #a7b4ba; }
-.af-workspace-legend .legend-running { background: #b47b25; }
-.af-workspace-legend .legend-completed { background: #357567; }
-.af-workspace-legend .legend-selected { background: transparent; border: 2px solid #426c9b; border-radius: 3px; }
-.af-workspace-legend .af-workspace-legend-note { color: #8a969c; }
-.af-workspace-scope { color: #88949b; font-size: 11px; line-height: 1.55; margin: 10px 0 0; }
-.af-workspace-unavailable { color: #775d3c; background: #fff6e8; border: 1px solid #e3d4b9; border-radius: 10px; padding: 18px; font-size: 13px; }
+.af-workspace-legend i { display: inline-block; width: 8px; height: 8px; border-radius:50%; background: #919895; }
+.af-workspace-legend .legend-running { background: #a7792b; }
+.af-workspace-legend .legend-completed { background: #37684d; }
+.af-workspace-legend .legend-selected { background: transparent; border: 2px solid #2752ad; border-radius:3px; }
+.af-workspace-legend .af-workspace-legend-note { color: #626b72; }
+.af-workspace-scope { color: #626b72; font-size: 11px; line-height: 1.7; margin: 10px 0 0; padding-top: 9px; border-top: 1px solid #e4e0d7; }
+.af-workspace-unavailable { color: #795b37; background: #faf5e9; border: 1px solid #ddcfb7; border-radius:4px; padding: 18px; font-size: 13px; }
+.is-chosen .af-workspace-node-order { color: #2752ad; border-color: #c6d2ee; background: #edf1fb; }
+.af-workspace-finding.finding-satisfied { border-color: #d5e4d8; }
+.af-workspace-finding.finding-not_satisfied, .af-workspace-finding.finding-evaluation_error { border-color: #edcfc7; }
+.af-workspace-finding.finding-insufficient_evidence { border-color: #edddba; }
+.af-workspace-finding.finding-not_applicable { background: #efefec; border-color: #ddded9; color: #5d666d; }
 @media (max-width: 680px) {
   .af-workspace-toolbar { flex-wrap: wrap; gap: 10px; }
   .af-workspace-toolbar label { width: 100%; max-width: none; }

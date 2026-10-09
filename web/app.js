@@ -495,7 +495,7 @@ function renderRun() {
   const counts = Object.fromEntries(Object.keys(statusLabels).filter(key => ['satisfied', 'not_satisfied', 'insufficient_evidence', 'not_applicable', 'evaluation_error'].includes(key)).map(key => [key, 0]));
   run.results.forEach(result => { if (result.status in counts) counts[result.status] += 1; });
   const summary = node('div', 'run-summary');
-  Object.entries(counts).forEach(([status, count]) => summary.append(append(node('div', 'result-counter'), node('strong', '', count), node('span', '', statusLabels[status]))));
+  Object.entries(counts).forEach(([status, count]) => summary.append(append(node('div', `result-counter outcome-${status}`), node('strong', '', count), node('span', '', statusLabels[status]))));
   summary.setAttribute('aria-label', 'Criterion outcome counts');
   const context = node('details', 'panel run-context');
   context.append(node('summary', '', 'Recorded scope & provenance'));
@@ -693,6 +693,7 @@ async function loadRecordedReplay(run, panel, container) {
 function renderFinding(run, result) {
   const criterion = (run.criteria || state.catalog).find(item => item.id === result.criterionId) || run.template?.criteria.find(item => item.id === result.criterionId);
   const finding = node('details', 'panel finding');
+  finding.dataset.status = result.status;
   finding.open = result.status === 'insufficient_evidence' || result.status === 'evaluation_error';
   const summary = node('summary');
   const copy = node('div', 'finding-summary');

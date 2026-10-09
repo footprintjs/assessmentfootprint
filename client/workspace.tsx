@@ -120,7 +120,7 @@ function AssessmentNode({ data }: NodeProps<StageNode>) {
           <Handle id={`out-${side}`} type="source" position={position as Position} isConnectable={false} />
         </React.Fragment>
       ))}
-      <div className="af-workspace-node-top"><span className="af-workspace-node-order">{data.order}</span><span className="af-workspace-traversal"><span aria-hidden="true" />{traversalLabels[data.traversal]}</span></div>
+      <div className="af-workspace-node-top"><span className="af-workspace-node-order">{String(data.order).padStart(2, '0')}</span><span className="af-workspace-traversal"><span aria-hidden="true" />{traversalLabels[data.traversal]}</span></div>
       <div className="af-workspace-node-title">{data.label}</div>
       <div className="af-workspace-node-tool">{data.collectorLabel}</div>
       <div className="af-workspace-node-finding">{data.finding ? <><span className="af-workspace-finding-label">Current finding</span><span className={`af-workspace-finding finding-${data.finding}`}>{findingLabels[data.finding]}</span></> : <span className="af-workspace-no-finding">{data.traversal === 'configured' ? 'Select to configure' : 'No finding recorded'}</span>}</div>
@@ -176,7 +176,7 @@ function WorkspaceCanvas({ nodes, edges, topologyKey, onSelect }: { nodes: Stage
       proOptions={{ hideAttribution: true }}
       ariaLabelConfig={{ 'node.a11yDescription.default': 'Select a stage to inspect or configure it. Use the stage selector above as a keyboard alternative.', 'controls.ariaLabel': 'Chart view controls' }}
     >
-      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#cdd5d8" />
+      <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d4d0c6" />
       <ViewportControls onFit={fit} />
     </ReactFlow>
   </div>;
@@ -219,7 +219,7 @@ function Workspace(options: WorkspaceOptions) {
     const source = nodeById.get(edge.source);
     const target = nodeById.get(edge.target);
     const completed = source?.data.traversal === 'completed' && target?.data.traversal === 'completed';
-    const color = completed ? '#357567' : '#374d61';
+    const color = completed ? '#357567' : '#162a40';
     return {
       ...edge, type: 'smoothstep', sourceHandle: edge.sourceHandle || 'out-bottom', targetHandle: edge.targetHandle || 'in-top',
       animated: false, interactionWidth: 14,
@@ -231,7 +231,7 @@ function Workspace(options: WorkspaceOptions) {
   const modeLabel = options.mode === 'draft' ? 'Configuration' : options.mode === 'running' ? 'Live evaluation' : options.mode === 'interrupted' ? 'Interrupted evaluation' : 'Recorded evaluation';
   return (
     <section className="af-workspace" aria-label="Assessment flowchart">
-      <div className="af-workspace-toolbar"><div><strong>{modeLabel}</strong><span>{nodes.length} connected stages · read from top to bottom</span></div><label htmlFor={pickerId}>Select stage<select id={pickerId} value={options.selectedId || ''} onChange={event => { if (event.currentTarget.value) options.onSelect(event.currentTarget.value); }}><option value="">Choose a stage</option>{built.order.map(id => <option key={id} value={id}>{(indices.get(id) ?? 0) + 1}. {nodeById.get(id)?.data.label}</option>)}</select></label></div>
+      <div className="af-workspace-toolbar"><div><strong>{modeLabel}</strong><span>{nodes.length} stages · top to bottom</span></div><label htmlFor={pickerId}>Select stage<select id={pickerId} value={options.selectedId || ''} onChange={event => { if (event.currentTarget.value) options.onSelect(event.currentTarget.value); }}><option value="">Choose a stage</option>{built.order.map(id => <option key={id} value={id}>{(indices.get(id) ?? 0) + 1}. {nodeById.get(id)?.data.label}</option>)}</select></label></div>
       <WorkspaceCanvas nodes={nodes} edges={edges} topologyKey={topologyKey} onSelect={options.onSelect} />
       <div className="af-workspace-legend"><span><i className="legend-running" />Running</span><span><i className="legend-completed" />Stage completed</span><span><i className="legend-selected" />Selected for inspection</span><span className="af-workspace-legend-note">Completion describes traversal. Current findings are separate.</span></div>
       <p className="af-workspace-scope">Arrows come from the assessment builder. Project input capture happens before this evaluation; attributed human review is separate.</p>

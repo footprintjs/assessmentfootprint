@@ -13,15 +13,15 @@
   <div class="app-shell">
     <aside class="sidebar" aria-label="Workspace navigation">
       <a class="brand" href="/" aria-label="AssessmentFootprint home">
-        <span class="brand-mark" aria-hidden="true">af</span>
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 36 42" fill="none"><path d="M11 8v26M11 21h15" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="3" width="10" height="10" fill="currentColor"/><rect x="6" y="16" width="10" height="10" stroke="currentColor" stroke-width="1.5"/><rect x="6" y="29" width="10" height="10" stroke="currentColor" stroke-width="1.5"/><path d="m22 18 3 3-3 3" stroke="currentColor" stroke-width="1.5"/></svg></span>
         <span>Assessment<span class="brand-sub">Footprint</span></span>
       </a>
-      <div class="workspace-label"><span class="status-dot"></span> LOCAL WORKSPACE</div>
+      <div class="workspace-label">ASSESSMENT WORKBENCH</div>
       <nav class="navigation">
-        <button class="nav-button active" type="button" data-view="assessment" aria-current="page"><span class="nav-symbol" aria-hidden="true">↗</span> New assessment</button>
-        <button class="nav-button" type="button" data-view="templates"><span class="nav-symbol" aria-hidden="true">▤</span> Templates</button>
-        <button class="nav-button" type="button" data-view="history"><span class="nav-symbol" aria-hidden="true">◷</span> Run history <span class="nav-count" id="history-count">0</span></button>
-        <button class="nav-button" type="button" data-view="tools"><span class="nav-symbol" aria-hidden="true">⌘</span> Tools &amp; setup</button>
+        <button class="nav-button active" type="button" data-view="assessment" aria-current="page"><span class="nav-symbol" aria-hidden="true">01</span> New assessment</button>
+        <button class="nav-button" type="button" data-view="templates"><span class="nav-symbol" aria-hidden="true">02</span> Templates</button>
+        <button class="nav-button" type="button" data-view="history"><span class="nav-symbol" aria-hidden="true">03</span> Run history <span class="nav-count" id="history-count">0</span></button>
+        <button class="nav-button" type="button" data-view="tools"><span class="nav-symbol" aria-hidden="true">04</span> Tools &amp; setup</button>
       </nav>
       <div class="sidebar-note">
         <span class="small-label">ON THIS COMPUTER</span>
@@ -29,7 +29,7 @@
         <button id="storage-toggle" type="button" class="text-button sidebar-link" aria-expanded="false">Show storage location <span aria-hidden="true">↗</span></button>
         <code id="storage-path" hidden></code>
       </div>
-      <div class="sidebar-footer">Evidence first. Conclusions in context.</div>
+      <div class="sidebar-footer"><span>THE ASSESSMENT RECORD</span>Method · Evidence · Judgment</div>
     </aside>
 
     <main id="main" tabindex="-1">
@@ -41,14 +41,12 @@
 
       <section id="assessment-view" class="view">
         <header class="page-intro flow-intro">
-          <div><div class="eyebrow">FLOW WORKSPACE</div><h1>Your assessment, in flow.</h1><p>Configure a stage, run the connected checks, then explore the evidence.</p></div>
+          <div><div class="eyebrow">METHOD / EVIDENCE / REVIEW</div><h1>Assessment workspace</h1><p>Define the method. Follow the checks. Review the evidence.</p></div>
           <span id="flow-mode" class="tag">Configure</span>
         </header>
         <div id="flow-setup" class="flow-setup">
           <section class="panel flow-project" aria-labelledby="project-heading">
-            <h2 id="project-heading">Project</h2>
-            <label class="field-label" for="project-source-kind">Project source</label>
-            <select id="project-source-kind" disabled><option value="local">Local folder</option><option value="github">GitHub repository</option><option value="npm">npm package</option></select>
+            <div class="project-heading-row"><h2 id="project-heading" data-section="01">Project</h2><div class="source-choice"><label class="sr-only" for="project-source-kind">Project source</label><select id="project-source-kind" disabled><option value="local">Local folder</option><option value="github">GitHub repository</option><option value="npm">npm package</option></select></div></div>
             <form id="remote-source-form" hidden>
               <label id="remote-source-label" class="field-label" for="remote-source">GitHub repository URL</label>
               <div class="input-action"><input id="remote-source" name="source" type="text" spellcheck="false" autocomplete="off" placeholder="https://github.com/owner/repository" maxlength="2048" required><button id="fetch-project" type="submit" class="button secondary" disabled>Fetch project</button></div>
@@ -59,7 +57,7 @@
             <div id="project-preview" class="project-preview" hidden></div>
           </section>
           <section class="panel flow-method" aria-labelledby="criteria-heading">
-            <h2 id="criteria-heading">Assessment method</h2>
+            <h2 id="criteria-heading" data-section="02">Assessment method</h2>
             <div class="assessment-template-fields"><div><label class="field-label" for="assessment-template">Template</label><select id="assessment-template" disabled><option value="">One-off checks</option></select></div><div id="assessment-version-field" hidden><label class="field-label" for="assessment-template-version">Version</label><select id="assessment-template-version"></select></div></div>
             <details id="flow-options"><summary>Scope, network &amp; check selection</summary><div id="assessment-template-info" class="template-selection-info" hidden></div><div id="criterion-list" class="criterion-list"></div><button id="restore-defaults" type="button" class="text-button" disabled>Use defaults</button><p id="network-description" class="field-help">Public advisory lookups are optional.</p><fieldset class="network-options"><legend>Network access</legend><label class="network-option"><input type="radio" name="network-mode" value="offline" checked><span><strong>Offline</strong><small>Local files and installed tools.</small></span></label><label class="network-option"><input type="radio" name="network-mode" value="online"><span><strong>Allow public lookups</strong><small>Permit supported public advisory downloads.</small></span></label></fieldset></details>
           </section>

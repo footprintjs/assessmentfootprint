@@ -15,7 +15,7 @@ npm ci
 npm start -- /absolute/path/to/project
 ```
 
-`npm ci` installs this workbench's dependencies. The assessed project is never installed by the assessment engine. The application runs its TypeScript source directly with Node; no application build step is required.
+`npm ci` installs this workbench's dependencies. The assessed project is never installed by the assessment engine. Node runs the engine and CLI TypeScript source directly. The browser replay viewer uses a locally bundled React application; this checkout includes its generated assets and does not load libraries from a CDN. After changing viewer source or dependencies, rebuild those assets with `npm run build:viewer` before launching Studio.
 
 Studio opens a local browser page and prints its address. The server listens on `127.0.0.1`, using a free port unless one is specified. Stop it with Ctrl+C.
 
@@ -165,7 +165,13 @@ To permit OSV's online advisory lookup for a one-off run, supply `--online`, or 
 
 The data directory contains `assessment.sqlite` and `runs/<run-id>/`. SQLite holds published template versions as well as run records. Selected input files are copied into a run's `inputs/` folder before evaluation. Evidence records identify their source, collection time, tool and version, byte size, SHA-256 digest, and local raw artifact reference. The original scanner JSON, diagnostics, and FootprintJS workflow are retained as evidence.
 
-FootprintJS `9.44.1` actually executes a linear chart: an input-digest stage followed by the selected criterion stages. Its state writes, commit log, write provenance, and narrative are saved in a workflow evidence artifact. This is recorded execution, not an invented explanation generated after the result.
+FootprintJS `9.44.1` actually executes a linear chart: an input-digest stage followed by the selected criterion stages. A workflow evidence artifact retains its full runtime snapshot, chart structure, scope state, commits, write provenance, narrative, and stage metrics captured during execution. Each recording identifies the assessment, captured policy, and input digest. This is recorded execution, not an explanation generated after the result.
+
+Studio's execution replay uses `footprint-explainable-ui` `0.38.0` to show the recorded chart, execution steps, finding context, scope state after each step, and measured evaluation durations. Selecting an earlier step shows the findings recorded by that point. The full recorded narrative remains in the original workflow evidence. Loading replay reads the retained artifact and does not rescan the project or rerun its checks. Artifact hashes and assessment/policy/input identity are checked before replay. Older flat workflow artifacts receive an explicit limited-history view; a run without a recording reports that replay is unavailable. Missing chart structure or timings are not reconstructed as facts.
+
+Replay covers **automated evaluation after input collection**. The initial stage records the already captured input digest; its duration is not file-collection time. A stage finishing means execution completed, even if its finding is negative or incomplete. Later human review appears in the current findings and review history while the automation recording stays unchanged. Scope reads/writes and evidence references do not establish a complete causal proof from every source-file byte to a decision.
+
+The state adapter rounds stage timings to milliseconds. Studio's timeline instead uses the raw saved Metrics durations to four significant digits, preserving fractional measurements; its stage offsets sum those displayed durations for this sequential evaluation. A recorded zero remains a measured zero. If measurements are missing, incomplete, or invalid, the viewer shows untimed execution order without inventing durations. The frozen overlay has no wall-clock step timestamps or reconstructed live-error channel.
 
 Studio shows run history, criterion findings, original evidence, and attributed review forms for criteria requiring review. Reviews append to the review history, increment the run revision, and update the current finding within a database transaction; an automatic result remains separately available. The automation completion timestamp is separate from final completion: a run awaiting review keeps its final completion timestamp unset. HTML and JSON reports include findings, retained rules and evidence requirements, the exact captured template, automatic results, evidence metadata, limitations, and review history; raw artifact files remain in the local data directory and are not embedded as a portable evidence bundle. Evidence reads verify stored bytes against their recorded digest; exports also verify frozen inputs and consistency of retained policy/criterion/network/framework metadata. These hashes are integrity checks, not signatures or independent authentication of the whole local record.
 
@@ -177,7 +183,7 @@ Git HEAD is recorded only as contextual metadata where available. The workbench 
 npm run check
 ```
 
-This runs TypeScript checking and the test suite. Avoid claiming a verification count without running the current suite.
+This checks engine/CLI and viewer TypeScript, verifies that the locally bundled viewer assets match their source, and runs the test suite. Build updated viewer assets with `npm run build:viewer`. Avoid claiming a verification count without running the current suite.
 
 Template configuration is limited to the declared collectors and rule forms above. Arbitrary programs, arbitrary DSL expressions, custom script runners, severity-based vulnerability policies, npm-audit/Scorecard adapters, remote governance checks, repository cloning, automatic multi-package discovery, general language/toolchain evaluation, local-model judgments, authenticated independent reviewers, and hosted collaboration are not implemented. A custom template can select nested files or supported lockfiles, but only those explicit inputs are assessed. No whole-source or installed-dependency inventory is inferred.
 

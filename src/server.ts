@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
-import type { AssessmentRun, CriterionDefinition, ProjectInfo, ReviewInput, RunInput, RunSummary, TemplateSummary, TemplateVersion, ToolDefinition } from './types.ts';
+import type { AssessmentRun, CriterionDefinition, ProjectInfo, ReviewInput, RunInput, RunSummary, TemplateSummary, TemplateVersion, ToolDefinition, WorkflowResponse } from './types.ts';
 
 export interface ServerEngine {
   getCatalog(): CriterionDefinition[];
@@ -19,6 +19,7 @@ export interface ServerEngine {
   listTemplateVersions(id: string): Array<{ version: number; createdAt: string; policyDigest: string }>;
   saveTemplate(draft: unknown): TemplateVersion;
   importTemplate(document: unknown): TemplateVersion;
+  getWorkflow(runId: string): WorkflowResponse | Promise<WorkflowResponse>;
 }
 
 const bodyLimit = 64 * 1024;
@@ -27,8 +28,12 @@ const staticFiles = new Map([
   ['/index.html', { name: 'index.html', type: 'text/html; charset=utf-8' }],
   ['/app.js', { name: 'app.js', type: 'text/javascript; charset=utf-8' }],
   ['/styles.css', { name: 'styles.css', type: 'text/css; charset=utf-8' }],
+  ['/assets/replay.js', { name: 'assets/replay.js', type: 'text/javascript; charset=utf-8' }],
+  ['/assets/replay.css', { name: 'assets/replay.css', type: 'text/css; charset=utf-8' }],
 ]);
-const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+// ReactFlow requires style attributes for node positions. Stylesheets remain local;
+// the replay stylesheet owns its keyframes so the library need not inject a style element.
+const csp = "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 
 class HttpError extends Error {
   status: number;
@@ -194,6 +199,12 @@ export async function startServer(options: { engine: ServerEngine; projectPath: 
 
       const runMatch = /^\/api\/runs\/([^/]+)$/.exec(url.pathname);
       if (req.method === 'GET' && runMatch) return json(res, 200, requireRun(engine, decodeURIComponent(runMatch[1])));
+      const workflowMatch = /^\/api\/runs\/([^/]+)\/workflow$/.exec(url.pathname);
+      if (req.method === 'GET' && workflowMatch) {
+        const runId = decodeURIComponent(workflowMatch[1]);
+        requireRun(engine, runId);
+        return json(res, 200, await engine.getWorkflow(runId));
+      }
       const reviewMatch = /^\/api\/runs\/([^/]+)\/reviews$/.exec(url.pathname);
       if (req.method === 'POST' && reviewMatch) {
         const runId = decodeURIComponent(reviewMatch[1]);

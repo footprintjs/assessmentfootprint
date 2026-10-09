@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { AssessmentEngine } from '../src/core.ts';
 import { startServer, type ServerEngine } from '../src/server.ts';
-import type { AssessmentRun, ReviewInput, RunInput, TemplateDraft, TemplateVersion } from '../src/types.ts';
+import type { AssessmentRun, ReviewInput, RunInput, TemplateDraft, TemplateVersion, WorkflowResponse } from '../src/types.ts';
 
 function fixture() {
   const inputs: RunInput[] = [];
@@ -27,6 +29,7 @@ function fixture() {
     exportReport: (_id, format) => format === 'json' ? JSON.stringify(run) : '<!doctype html><html><body>Report</body></html>',
     listTemplates: () => [], getTemplate: () => null, listTemplateVersions: () => [],
     saveTemplate: () => { throw new Error('No fixture template has been defined.'); }, importTemplate: () => { throw new Error('No fixture template has been defined.'); },
+    getWorkflow: () => ({ kind: 'unavailable', note: 'This fixture does not include a recorded workflow.' }),
   };
   return { engine, run, inputs, reviews };
 }
@@ -59,6 +62,8 @@ test('local API exposes bootstrap, runs, evidence and downloadable reports', asy
   assert.equal(bootstrap.headers['access-control-allow-origin'], undefined);
   assert.match(bootstrap.headers['content-security-policy'] as string, /script-src 'self'/);
   assert.doesNotMatch(bootstrap.headers['content-security-policy'] as string, /script-src[^;]*unsafe-inline/);
+  assert.match(bootstrap.headers['content-security-policy'] as string, /style-src 'self'(?:;|$)/);
+  assert.match(bootstrap.headers['content-security-policy'] as string, /style-src-attr 'unsafe-inline'/);
   const headers = { 'Content-Type': 'application/json', 'X-Assessment-Session': state.sessionToken, Origin: app.url };
   const assessed = await http(app.url, { method: 'POST', path: '/api/runs', headers, body: JSON.stringify({ projectPath: '/example/project', criterionIds: ['documentation'], networkMode: 'offline' }) });
   assert.equal(assessed.status, 201);
@@ -68,6 +73,7 @@ test('local API exposes bootstrap, runs, evidence and downloadable reports', asy
   assert.equal(reviewed.status, 200);
   assert.equal(reviews[0].runId, 'run-1');
   assert.equal((await http(app.url, { path: '/api/runs/run-1' })).status, 200);
+  assert.deepEqual(JSON.parse((await http(app.url, { path: '/api/runs/run-1/workflow' })).body), { kind: 'unavailable', note: 'This fixture does not include a recorded workflow.' });
   const evidence = await http(app.url, { path: '/api/runs/run-1/evidence/evidence-1' });
   assert.equal(evidence.status, 200);
   assert.equal(evidence.body, '<script>bad()</script>');
@@ -278,4 +284,99 @@ test('large valid template API exports remain within the bounded JSON import siz
   assert.equal(imported.version, 2);
   assert.equal(imported.policyDigest, saved.policyDigest);
   assert.deepEqual(engine.getTemplate(saved.id, 1), saved);
+});
+
+test('workflow API serves recorded replay, preserves legacy gaps, and rejects damaged evidence', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'assessment-workflow-api-'));
+  const projectPath = join(root, 'project');
+  const dataDir = join(root, 'data');
+  mkdirSync(projectPath);
+  writeFileSync(join(projectPath, 'package.json'), '{"name":"workflow-fixture","version":"1.0.0"}');
+  const engine = new AssessmentEngine({ dataDir, osvExecutable: join(root, 'missing-scanner') });
+  const current = await engine.runAssessment({ projectPath, criterionIds: ['project-metadata'] });
+  const earlier = await engine.runAssessment({ projectPath, criterionIds: ['project-metadata'] });
+  const app = await startServer({ engine, projectPath, dataDir });
+  t.after(async () => { await app.close(); engine.close(); rmSync(root, { recursive: true, force: true }); });
+
+  const response = await http(app.url, { path: `/api/runs/${current.id}/workflow` });
+  assert.equal(response.status, 200, response.body);
+  assert.equal(response.headers['content-type'], 'application/json; charset=utf-8');
+  assert.equal(response.headers['cache-control'], 'no-store');
+  const replay = JSON.parse(response.body) as WorkflowResponse;
+  assert.equal(replay.kind, 'replay');
+  if (replay.kind !== 'replay') throw new Error('Expected a full replay.');
+  assert.equal(replay.recording.schemaVersion, 1);
+  assert.equal(replay.recording.scope, 'automated-evaluation');
+  assert.equal(replay.recording.assessmentId, current.id);
+  assert.equal(replay.recording.policyDigest, current.framework.policyDigest);
+  assert.ok(replay.recording.snapshot.executionTree);
+  assert.ok(replay.recording.structure);
+  assert.ok(replay.recording.snapshot.commitLog.length);
+  assert.ok(replay.recording.snapshot.recorders?.some(recorder => recorder.name === 'Metrics'));
+
+  const legacy = {
+    recorder: 'footprintjs', version: '9.44.1', runId: replay.recording.snapshot.runId,
+    sharedState: { findings: [] }, commitLog: [], commitValues: 'full', writeProvenance: {},
+    narrative: [{ type: 'stage', text: 'Package identity executed.', depth: 0, stageId: 'project-metadata' }],
+  };
+  const earlierEvidence = earlier.evidence.find(evidence => evidence.toolId === 'footprintjs')!;
+  const legacyBytes = Buffer.from(JSON.stringify(legacy));
+  writeFileSync(join(dataDir, earlierEvidence.rawArtifactRef), legacyBytes);
+  earlierEvidence.sha256 = createHash('sha256').update(legacyBytes).digest('hex');
+  earlierEvidence.bytes = legacyBytes.length;
+  const db = new DatabaseSync(join(dataDir, 'assessment.sqlite'));
+  try { db.prepare('UPDATE runs SET payload=? WHERE id=?').run(JSON.stringify(earlier), earlier.id); }
+  finally { db.close(); }
+  const legacyResponse = await http(app.url, { path: `/api/runs/${earlier.id}/workflow` });
+  assert.equal(legacyResponse.status, 200, legacyResponse.body);
+  const legacyView = JSON.parse(legacyResponse.body) as WorkflowResponse;
+  assert.equal(legacyView.kind, 'legacy');
+  if (legacyView.kind !== 'legacy') throw new Error('Expected honest legacy recording details.');
+  assert.match(legacyView.note, /earlier|execution tree|record/i);
+  assert.deepEqual(legacyView.narrativeEntries, legacy.narrative);
+  assert.equal('recording' in legacyView, false);
+
+  const currentEvidence = current.evidence.find(evidence => evidence.id === replay.evidenceId)!;
+  writeFileSync(join(dataDir, currentEvidence.rawArtifactRef), '{"tampered":true}');
+  const damaged = await http(app.url, { path: `/api/runs/${current.id}/workflow` });
+  assert.equal(damaged.status, 409);
+  assert.match(JSON.parse(damaged.body).error, /integrity/i);
+  assert.equal(JSON.parse(damaged.body).kind, undefined);
+});
+
+test('workflow reads retain local-origin protections and do not invent missing runs', async t => {
+  const app = await startServer({ engine: fixture().engine, projectPath: '/example/project', dataDir: '/example/data' });
+  t.after(() => app.close());
+  const rejectedHeaders: Record<string, string>[] = [{ Host: 'unrelated.example' }, { Origin: 'https://unrelated.example' }, { 'Sec-Fetch-Site': 'cross-site' }];
+  for (const headers of rejectedHeaders) {
+    const response = await http(app.url, { path: '/api/runs/run-1/workflow', headers });
+    assert.equal(response.status, 403);
+    assert.equal(response.headers['access-control-allow-origin'], undefined);
+  }
+  assert.equal((await http(app.url, { path: '/api/runs/missing/workflow' })).status, 404);
+  assert.equal((await http(app.url, { path: '/api/runs/%GG/workflow' })).status, 400);
+  assert.equal((await http(app.url, { method: 'POST', path: '/api/runs/run-1/workflow', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
+});
+
+test('replay assets have an exact local allowlist, correct MIME types and narrow CSP', async t => {
+  const app = await startServer({ engine: fixture().engine, projectPath: '/example/project', dataDir: '/example/data' });
+  t.after(() => app.close());
+  for (const [path, type] of [['/assets/replay.js', 'text/javascript; charset=utf-8'], ['/assets/replay.css', 'text/css; charset=utf-8']]) {
+    const response = await http(app.url, { path });
+    assert.equal(response.status, 200, `Expected the built local replay asset ${path}.`);
+    assert.equal(response.headers['content-type'], type);
+    assert.equal(response.headers['x-content-type-options'], 'nosniff');
+    assert.equal(response.headers['cross-origin-resource-policy'], 'same-origin');
+    assert.ok(response.body.length > 0);
+    const policy = response.headers['content-security-policy'] as string;
+    assert.match(policy, /script-src 'self'(?:;|$)/);
+    assert.match(policy, /style-src 'self'(?:;|$)/);
+    assert.match(policy, /style-src-attr 'unsafe-inline'/);
+    assert.doesNotMatch(policy, /script-src[^;]*(?:unsafe-inline|unsafe-eval|https?:|\*)/);
+    assert.doesNotMatch(policy, /style-src (?!'self';)/);
+  }
+  for (const path of ['/assets/replay.js.map', '/assets/other.js', '/assets/%2e%2e/src/core.ts', '/assets/replay.js%00']) {
+    assert.equal((await http(app.url, { path })).status, 404);
+  }
+  assert.equal((await http(app.url, { path: '/assets/replay.js', headers: { Origin: 'https://unrelated.example' } })).status, 403);
 });

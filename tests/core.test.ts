@@ -48,8 +48,8 @@ test('actual input files are frozen, shared evidence is reused, and FootprintJS 
   assert.equal(engine.readEvidence(run.id, manifestEvidence.id).toString(), original);
   const traceRecord = run.evidence.find(e => e.toolId === 'footprintjs')!;
   const trace = JSON.parse(engine.readEvidence(run.id, traceRecord.id).toString());
-  assert.equal(trace.sharedState.findings.length, 6);
-  assert.ok(trace.commitLog.length > 0);
+  assert.equal(trace.snapshot.sharedState.findings.length, 6);
+  assert.ok(trace.snapshot.commitLog.length > 0);
   assert.equal(run.events.filter(e => e.type === 'criterion_completed').length, 6);
   assert.match(engine.exportReport(run.id, 'html'), /Self-assessment/);
 });

@@ -6,7 +6,10 @@ const state = {
   pollTimer: null, activeRunId: null, evidenceRequest: 0, reviewBusy: false,
   templates: [], builtinTemplate: null, assessmentTemplate: null, templateSelectionRequest: 0,
   templateSelectionLoading: false, editor: null, editorRequest: 0, publishing: false,
+  replayRequest: 0, replayAbort: null, replayUnmount: null, replayOpenRunId: null,
 };
+let replayModulePromise = null;
+let replayStylesPromise = null;
 const $ = (selector, root = document) => root.querySelector(selector);
 const statusLabels = {
   satisfied: 'Satisfied', not_satisfied: 'Not satisfied',
@@ -81,6 +84,12 @@ async function api(path, options = {}) {
 }
 
 function setView(view, focus = false) {
+  if (view !== 'run') {
+    disposeReplay();
+    state.replayOpenRunId = null;
+    const panel = $('#recorded-replay-panel');
+    if (panel) panel.open = false;
+  }
   state.view = view;
   document.querySelectorAll('.view').forEach(element => { element.hidden = element.id !== `${view}-view`; });
   document.querySelectorAll('.nav-button').forEach(element => {
@@ -392,6 +401,7 @@ function metadata(label, value, wide = false, mono = false) {
 function renderRun() {
   const run = state.run;
   const content = $('#run-content');
+  disposeReplay();
   content.replaceChildren();
   if (!run) { content.append(node('p', 'empty-copy', 'Select a saved assessment to view its findings.')); return; }
   const back = button('← All assessments', 'text-button run-back', () => setView('history', true));
@@ -438,7 +448,12 @@ function renderRun() {
   const findings = node('div', 'findings-stack');
   if (!run.results.length) findings.append(node('p', 'empty-copy', 'The engine has not recorded any criterion results yet.'));
   for (const result of run.results) findings.append(renderFinding(run, result));
-  append(content, back, intro, summary, context, heading, findings);
+  const replay = createReplayPanel(run);
+  append(content, back, intro, summary, context, replay, heading, findings);
+  if (state.replayOpenRunId === run.id) {
+    replay.open = true;
+    loadRecordedReplay(run, replay, $('.recorded-replay-mount', replay));
+  }
   if (run.status === 'running' || run.status === 'interrupted') {
     const activity = node('section', 'panel run-limitations');
     append(activity, node('h2', '', 'Recorded run activity'));
@@ -454,6 +469,132 @@ function renderRun() {
     run.limitations.forEach(item => list.append(node('li', '', item)));
     limitations.append(list);
     content.append(limitations);
+  }
+}
+
+function disposeReplay() {
+  state.replayRequest += 1;
+  state.replayAbort?.abort();
+  state.replayAbort = null;
+  if (state.replayUnmount) { state.replayUnmount(); state.replayUnmount = null; }
+}
+
+function loadReplayStyles() {
+  if (replayStylesPromise) return replayStylesPromise;
+  replayStylesPromise = new Promise((resolve, reject) => {
+    const existing = document.getElementById('fp-stage-node-keyframes');
+    if (existing?.sheet) { resolve(); return; }
+    const link = existing || node('link');
+    link.id = 'fp-stage-node-keyframes';
+    link.rel = 'stylesheet';
+    link.href = '/assets/replay.css';
+    const timeout = setTimeout(() => fail('The local replay stylesheet did not load in time.'), 15000);
+    const complete = () => { clearTimeout(timeout); resolve(); };
+    const fail = message => { clearTimeout(timeout); link.remove(); replayStylesPromise = null; reject(new Error(message)); };
+    link.addEventListener('load', complete, { once: true });
+    link.addEventListener('error', () => fail('The local replay stylesheet could not be loaded.'), { once: true });
+    if (!existing) document.head.append(link);
+  });
+  return replayStylesPromise;
+}
+
+function loadReplayModule() {
+  if (!replayModulePromise) replayModulePromise = import('/assets/replay.js').catch(error => { replayModulePromise = null; throw error; });
+  return replayModulePromise;
+}
+
+function createReplayPanel(run) {
+  const panel = node('details', 'panel recorded-replay-panel');
+  panel.id = 'recorded-replay-panel';
+  const heading = node('summary', 'recorded-replay-heading');
+  const title = node('div');
+  append(title, node('h2', '', 'What happened?'), node('p', '', 'Step through the saved evaluation, its findings, and the evidence attached to each criterion.'));
+  append(heading, title, node('span', 'tag muted', 'Recorded replay'));
+  const body = node('div', 'recorded-replay-body');
+  const mount = node('div', 'recorded-replay-mount');
+  mount.append(node('p', 'empty-copy', 'Open this panel to load the recorded traversal.'));
+  const source = run.evidence.find(evidence => evidence.toolId === 'footprintjs');
+  const footer = node('div', 'recorded-replay-footer');
+  append(footer, node('p', '', 'Replaying a traversal does not rerun checks. A completed step can have a negative or inconclusive criterion finding.'));
+  if (source) footer.append(button('Inspect original workflow output ↗', 'text-button', () => openEvidence(run.id, source)));
+  append(body, mount, footer); append(panel, heading, body);
+  panel.addEventListener('toggle', () => {
+    if (panel.open) {
+      state.replayOpenRunId = run.id;
+      loadRecordedReplay(run, panel, mount);
+    } else if (state.replayOpenRunId === run.id) {
+      state.replayOpenRunId = null;
+      disposeReplay();
+      panel.dataset.replayLoading = 'false'; panel.dataset.replayLoaded = 'false';
+      mount.replaceChildren(node('p', 'empty-copy', 'Open this panel to load the recorded traversal.'));
+    }
+  });
+  return panel;
+}
+
+function renderWorkflowFallback(run, workflow, container) {
+  container.replaceChildren();
+  const note = node('p', 'recorded-replay-note', workflow.note || 'An interactive replay is unavailable for this recording.');
+  append(container, note);
+  if (run.events.length) {
+    const heading = node('h3', 'recorded-activity-heading', 'Recorded run activity');
+    const events = node('ol', 'recorded-activity-list');
+    run.events.slice(0, 200).forEach(event => {
+      const entry = node('li');
+      append(entry, node('span', '', event.message), node('time', '', formatDate(event.timestamp)));
+      events.append(entry);
+    });
+    append(container, heading, events);
+    if (run.events.length > 200) container.append(node('p', 'field-help', 'The first 200 events are shown. The exported run retains the complete activity record.'));
+  }
+  const narrative = Array.isArray(workflow.narrativeEntries) ? workflow.narrativeEntries.filter(entry => entry && typeof entry.text === 'string') : [];
+  if (narrative.length) {
+    const details = node('details', 'recorded-narrative-fallback');
+    details.append(node('summary', '', 'Preserved workflow narration'));
+    const output = node('pre', '', narrative.slice(0, 200).map(entry => entry.text).join('\n'));
+    details.append(output);
+    if (narrative.length > 200) details.append(node('p', 'field-help', 'The first 200 narration entries are shown. Inspect the original workflow output for the full recording.'));
+    container.append(details);
+  }
+}
+
+async function loadRecordedReplay(run, panel, container) {
+  if (!container || panel.dataset.replayLoading === 'true' || panel.dataset.replayLoaded === 'true') return;
+  const request = ++state.replayRequest;
+  const controller = new AbortController();
+  state.replayAbort?.abort(); state.replayAbort = controller;
+  panel.dataset.replayLoading = 'true';
+  const message = node('p', 'empty-copy', 'Loading the saved workflow from the local engine…'); message.setAttribute('role', 'status');
+  container.replaceChildren(message);
+  const stillCurrent = () => request === state.replayRequest && panel.open && container.isConnected && state.run?.id === run.id;
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/workflow`, { credentials: 'same-origin', signal: controller.signal });
+    if (!response.ok) {
+      let error = `Recorded workflow could not be loaded (${response.status}).`;
+      try { const body = await response.json(); if (body.error) error = body.error; } catch { /* Preserve the HTTP error. */ }
+      throw new Error(error);
+    }
+    const workflow = await response.json();
+    if (!stillCurrent()) return;
+    if (workflow.kind === 'replay') {
+      const [, module] = await Promise.all([loadReplayStyles(), loadReplayModule()]);
+      if (!stillCurrent()) return;
+      container.replaceChildren();
+      state.replayUnmount = module.mountReplay(container, { run, workflow, onEvidence: openEvidence });
+    } else renderWorkflowFallback(run, workflow, container);
+    panel.dataset.replayLoaded = 'true';
+  } catch (error) {
+    if (!stillCurrent()) return;
+    const note = error.name === 'AbortError' ? 'The recorded workflow request timed out. The saved findings and original evidence remain available.' : `The recorded replay could not be loaded. ${error.message}`;
+    renderWorkflowFallback(run, { note }, container);
+    container.append(button('Try loading replay again', 'button secondary small', () => {
+      panel.dataset.replayLoading = 'false'; panel.dataset.replayLoaded = 'false';
+      loadRecordedReplay(run, panel, container);
+    }));
+  } finally {
+    clearTimeout(timeout);
+    if (request === state.replayRequest) { panel.dataset.replayLoading = 'false'; state.replayAbort = null; }
   }
 }
 

@@ -11,7 +11,8 @@ AssessmentFootprint is a local Node 24+ application, currently private and unpub
 - Keep `not_applicable`, `insufficient_evidence`, `not_satisfied`, and `evaluation_error` distinct. Workflow completion does not mean every criterion is satisfied. Preserve documented CLI exit-code precedence.
 - Preserve frozen selected inputs, source hashes, original scanner output, diagnostics, tool versions, retained criterion definitions, revision numbering, limitations, and review history. Keep automation completion separate from final completion. Do not claim a whole-repository snapshot when only named root inputs were collected.
 - An automatic criterion requiring review must retain its `automaticResult` before and after human judgment. Never overwrite that result to make the automatic evaluation appear to agree with the reviewer.
-- FootprintJS actually runs the evaluation chart. Capture trace state/narrative during traversal; do not invent agent events or post-hoc explanations that pretend to be recorded execution.
+- FootprintJS actually runs the evaluation chart. Capture its full runtime snapshot, chart structure, narrative, and metrics during traversal; do not invent agent events or post-hoc explanations that pretend to be recorded execution. Replay must consume the stored artifact with hash and assessment/policy/source checks, never rerun checks to populate a historical view.
+- Keep replay scope honest: it records automated evaluation after input capture, not file-collection timing or complete file-to-decision causal proof. Stage completion is separate from criterion satisfaction. Missing legacy structure, timing, wall-clock timestamps, and live error telemetry must remain absent. Human review must not rewrite the automation recording.
 
 ## Execution and local boundaries
 
@@ -26,6 +27,6 @@ AssessmentFootprint is a local Node 24+ application, currently private and unpub
 
 ## Source and verification
 
-Use the existing ESM/native TypeScript style with `.ts` local import extensions and `import type` for types. Avoid runtime TypeScript syntax unsupported by Node's type stripping. Keep runtime dependencies proportionate to delivered capabilities; AgentFootprint, Lens, HCI, and Viz integrations are optional until their actual use is implemented.
+Use the existing ESM/native TypeScript style with `.ts` local import extensions and `import type` for types. Avoid runtime TypeScript syntax unsupported by Node's type stripping. The React replay source in `client/` is bundled separately with `npm run build:viewer`; retain locally generated assets and avoid remote CDN dependencies. Reuse installed Explainable UI adapters for recorded chart, state, and overlay rather than fabricating parallel trace semantics. AgentFootprint, Lens, HCI, and Viz integrations are optional until their actual use is implemented.
 
-Run `npm run check` after relevant changes. Add meaningful tests for changes to evidence interpretation, storage, process execution, CLI status, and local HTTP boundaries. Check documentation against current behavior; never fabricate scanner results, test counts, supported platforms, or a published npm launcher. Update the README and architecture notes when the supported scope changes.
+Run `npm run check` after relevant changes, including viewer type checking and bundle freshness. Add meaningful tests for changes to evidence interpretation, storage, process execution, replay compatibility, CLI status, and local HTTP boundaries. Check documentation against current behavior; never fabricate scanner results, test counts, supported platforms, or a published npm launcher. Update the README and architecture notes when the supported scope changes.

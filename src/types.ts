@@ -1,3 +1,5 @@
+import type { RuntimeSnapshot } from 'footprintjs';
+
 export type CriterionStatus = 'satisfied' | 'not_satisfied' | 'insufficient_evidence' | 'not_applicable' | 'evaluation_error';
 export type ReviewDecision = 'satisfied' | 'not_satisfied' | 'insufficient_evidence';
 export interface CriterionDefinition {
@@ -149,3 +151,20 @@ export interface ReviewInput {
   decision: ReviewDecision;
   rationale: string;
 }
+
+export interface WorkflowRecording {
+  schemaVersion: 1;
+  recorder: 'footprintjs';
+  version: string;
+  scope: 'automated-evaluation';
+  assessmentId: string;
+  policyDigest: string;
+  sourceDigest: string;
+  snapshot: RuntimeSnapshot;
+  structure: unknown;
+  narrativeEntries: unknown[];
+}
+export type WorkflowResponse =
+  | { kind: 'replay'; recording: WorkflowRecording; evidenceId: string }
+  | { kind: 'legacy'; note: string; evidenceId: string; narrativeEntries: unknown[] }
+  | { kind: 'unavailable'; note: string };

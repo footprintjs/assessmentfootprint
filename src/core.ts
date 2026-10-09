@@ -2,19 +2,21 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, readFileSync, writeFileSync, realpathSync, lstatSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, realpathSync, lstatSync, statSync, existsSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, resolve, basename, sep } from 'node:path';
 import { flowChart, FlowChartExecutor } from 'footprintjs';
-import type { AssessmentRun, CriterionDefinition, CriterionResult, CriterionStatus, EvidenceRecord, ProjectInfo, ReviewInput, RunEvent, RunInput, RunSummary, ToolDefinition, TemplateDraft, TemplateVersion, TemplateSummary, TemplateCriterion } from './types.ts';
+import { metrics } from 'footprintjs/recorders';
+import type { AssessmentRun, CriterionDefinition, CriterionResult, CriterionStatus, EvidenceRecord, ProjectInfo, ReviewInput, RunEvent, RunInput, RunSummary, ToolDefinition, TemplateDraft, TemplateVersion, TemplateSummary, TemplateCriterion, WorkflowRecording, WorkflowResponse } from './types.ts';
 import { AssessmentError } from './errors.ts';
 export { AssessmentError } from './errors.ts';
 import { builtInTemplate, DEFAULT_TEMPLATE_ID, generatedTemplateId, normalizeTemplateDraft, policyDigest, templateIdentifier, templateInputPaths } from './templates.ts';
 
 const execFileAsync = promisify(execFile);
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
+const MAX_REPLAY_BYTES = 8 * 1024 * 1024;
 const LOCKFILES = ['package-lock.json', 'npm-shrinkwrap.json', 'pnpm-lock.yaml', 'yarn.lock'];
 const INPUT_FILES = ['package.json', ...LOCKFILES, 'LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'SECURITY.md', '.github/SECURITY.md', 'GOVERNANCE.md', '.github/GOVERNANCE.md', 'CONTRIBUTING.md', '.github/CONTRIBUTING.md', 'README.md'];
 const CATALOG: CriterionDefinition[] = [
@@ -336,7 +338,7 @@ export class AssessmentEngine {
         }
         return row;
       };
-      const chart = flowChart<TraceState>('Freeze assessment inputs', scope => { scope.subjectDigest = assessment.sourceSnapshot.digest; scope.findings = []; scope.activeCriterion = ''; }, '_freeze-inputs');
+      const chart = flowChart<TraceState>('Initialize recorded assessment', scope => { scope.subjectDigest = assessment.sourceSnapshot.digest; scope.findings = []; scope.activeCriterion = ''; }, '_freeze-inputs');
       for (const criterion of template.criteria) {
         const criterionId = criterion.id;
         chart.addFunction(criterion.title, async scope => {
@@ -349,12 +351,15 @@ export class AssessmentEngine {
           emit({ type: 'criterion_completed', criterionId, message: row.rationale, timestamp: stamp() });
         }, criterionId);
       }
-      const executor = new FlowChartExecutor(chart.build());
+      const builtChart = chart.build();
+      const executor = new FlowChartExecutor(builtChart);
       executor.enableNarrative();
+      executor.attachScopeRecorder(metrics());
       await executor.run({ input: { projectPath: subject.path, criterionIds: selected } });
       const snapshot = executor.getSnapshot();
-      const trace = JSON.stringify({ recorder: 'footprintjs', version: '9.44.1', runId: snapshot.runId, sharedState: snapshot.sharedState, commitLog: snapshot.commitLog, commitValues: snapshot.commitValues, writeProvenance: snapshot.writeProvenance, narrative: executor.getNarrativeEntries() }, null, 2);
-      this.addEvidence(assessment, 'footprintjs', '9.44.1', 'Recorded assessment workflow', Buffer.from(trace), { format: 'footprintjs-workflow', stages: selected.length + 1 });
+      const recording: WorkflowRecording = { schemaVersion: 1, recorder: 'footprintjs', version: '9.44.1', scope: 'automated-evaluation', assessmentId: assessment.id, policyDigest: assessment.framework.policyDigest, sourceDigest: assessment.sourceSnapshot.digest, snapshot, structure: builtChart.buildTimeStructure, narrativeEntries: executor.getNarrativeEntries() };
+      const trace = JSON.stringify(recording, null, 2);
+      this.addEvidence(assessment, 'footprintjs', '9.44.1', 'Recorded assessment workflow', Buffer.from(trace), { format: 'footprintjs-workflow', schemaVersion: 1, scope: 'automated-evaluation', stages: selected.length + 1 });
       assessment.status = template.criteria.some(c => c.requiresReview) ? 'awaiting_review' : 'completed';
       assessment.automationCompletedAt = stamp();
       assessment.completedAt = assessment.status === 'completed' ? assessment.automationCompletedAt : null;
@@ -375,6 +380,28 @@ export class AssessmentEngine {
   getRun(id: string): AssessmentRun | null {
     const row = this.db.prepare('SELECT payload FROM runs WHERE id=?').get(id) as { payload: string } | undefined;
     return row ? JSON.parse(row.payload) as AssessmentRun : null;
+  }
+  getWorkflow(runId: string): WorkflowResponse {
+    const run = this.getRun(runId);
+    if (!run) throw new AssessmentError(404, 'Assessment run not found.');
+    this.assertRunPolicy(run);
+    const evidence = run.evidence.filter(item => item.toolId === 'footprintjs' && item.source === 'Recorded assessment workflow').at(-1);
+    if (!evidence) return { kind: 'unavailable', note: 'No completed automated execution recording is available for this run. Its recorded activity and findings remain available.' };
+    const bytes = this.readEvidence(run.id, evidence.id, MAX_REPLAY_BYTES);
+    let parsed: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(bytes.toString('utf8'));
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected a recording object.');
+      parsed = value as Record<string, unknown>;
+    } catch { throw new AssessmentError(409, 'The recorded workflow is not valid JSON.'); }
+    if (parsed.schemaVersion === undefined && Array.isArray(parsed.commitLog) && parsed.sharedState && typeof parsed.sharedState === 'object') {
+      return { kind: 'legacy', evidenceId: evidence.id, note: 'This earlier run retained commits and narrative, but did not record the full execution tree, chart structure, or measured stage timings. Available history is shown below; start a new assessment to capture full replay.', narrativeEntries: Array.isArray(parsed.narrative) ? parsed.narrative : [] };
+    }
+    const snapshot = parsed.snapshot as Record<string, unknown> | undefined;
+    const structure = parsed.structure as Record<string, unknown> | undefined;
+    if (parsed.schemaVersion !== 1 || parsed.recorder !== 'footprintjs' || parsed.scope !== 'automated-evaluation' || !snapshot || typeof snapshot !== 'object' || !snapshot.executionTree || typeof snapshot.executionTree !== 'object' || !Array.isArray(snapshot.commitLog) || !snapshot.sharedState || typeof snapshot.sharedState !== 'object' || !structure || typeof structure !== 'object' || typeof structure.id !== 'string' || typeof structure.name !== 'string' || !Array.isArray(parsed.narrativeEntries)) throw new AssessmentError(409, 'The execution recording has an unsupported or incomplete replay format.');
+    if (parsed.assessmentId !== run.id || parsed.policyDigest !== run.framework.policyDigest || parsed.sourceDigest !== run.sourceSnapshot.digest) throw new AssessmentError(409, 'Execution recording integrity check failed: its assessment, policy, or source identity does not match this run.');
+    return { kind: 'replay', evidenceId: evidence.id, recording: parsed as unknown as WorkflowRecording };
   }
   submitReview(input: ReviewInput): AssessmentRun {
     this.db.exec('BEGIN IMMEDIATE');
@@ -403,7 +430,7 @@ export class AssessmentEngine {
     this.save(run);
     return run;
   }
-  readEvidence(runId: string, evidenceId: string): Buffer {
+  readEvidence(runId: string, evidenceId: string, maximumBytes?: number): Buffer {
     const run = this.getRun(runId);
     const evidence = run?.evidence.find(e => e.id === evidenceId);
     if (!run || !evidence) throw new AssessmentError(404, 'Evidence not found.');
@@ -411,14 +438,16 @@ export class AssessmentEngine {
     const artifactRoot = realpathSync(join(this.dataDir, 'runs', run.id));
     const actual = realpathSync(path);
     if (!actual.startsWith(artifactRoot + sep) || lstatSync(path).isSymbolicLink()) throw new Error('Artifact path is outside its assessment run.');
+    if (maximumBytes !== undefined && statSync(actual).size > maximumBytes) throw new AssessmentError(409, 'The execution recording exceeds the supported 8 MiB replay size. Inspect its original evidence instead.');
     const content = readFileSync(actual);
+    if (maximumBytes !== undefined && content.length > maximumBytes) throw new AssessmentError(409, 'The execution recording exceeds the supported 8 MiB replay size. Inspect its original evidence instead.');
     if (sha(content) !== evidence.sha256) throw new AssessmentError(409, 'Evidence integrity check failed: the stored artifact has changed.');
     return content;
   }
   exportReport(runId: string, format: 'json' | 'html'): string {
     const run = this.getRun(runId);
     if (!run) throw new AssessmentError(404, 'Assessment run not found.');
-    if (run.template && (policyDigest(run.template) !== run.template.policyDigest || policyDigest({ ...run.template, criteria: run.criteria as TemplateCriterion[] }) !== run.template.policyDigest || run.framework.policyDigest !== run.template.policyDigest || run.framework.id !== run.template.id || run.framework.name !== run.template.name || run.framework.version !== String(run.template.version) || run.networkMode !== run.template.networkMode)) throw new AssessmentError(409, 'Assessment policy integrity check failed: the retained template or criterion definitions have changed.');
+    this.assertRunPolicy(run);
     for (const evidence of run.evidence) this.readEvidence(run.id, evidence.id);
     const frozenRoot = realpathSync(join(this.dataDir, 'runs', run.id, 'inputs'));
     for (const input of run.sourceSnapshot.files) {
@@ -439,6 +468,9 @@ export class AssessmentEngine {
   }
   close(): void { this.db.close(); }
 
+  private assertRunPolicy(run: AssessmentRun): void {
+    if (run.template && (policyDigest(run.template) !== run.template.policyDigest || policyDigest({ ...run.template, criteria: run.criteria as TemplateCriterion[] }) !== run.template.policyDigest || run.framework.policyDigest !== run.template.policyDigest || run.framework.id !== run.template.id || run.framework.name !== run.template.name || run.framework.version !== String(run.template.version) || run.networkMode !== run.template.networkMode)) throw new AssessmentError(409, 'Assessment policy integrity check failed: the retained template or criterion definitions have changed.');
+  }
   private save(run: AssessmentRun): void { this.db.prepare('INSERT INTO runs(id,started_at,payload) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload').run(run.id, run.startedAt, JSON.stringify(run)); }
   private addEvidence(run: AssessmentRun, toolId: string, toolVersion: string, source: string, content: Buffer, value: unknown): EvidenceRecord {
     const id = randomUUID();

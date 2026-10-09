@@ -113,7 +113,7 @@ test('a valid criterion named freeze-inputs cannot collide with the internal wor
   const trace = run.evidence.find(record => record.toolId === 'footprintjs');
   assert.ok(trace);
   const recorded = JSON.parse(engine.readEvidence(run.id, trace.id).toString());
-  assert.equal(recorded.sharedState.findings.length, 1);
+  assert.equal(recorded.snapshot.sharedState.findings.length, 1);
 });
 
 test('publishing requires the latest expected version and stale writers cannot replace a policy', t => {

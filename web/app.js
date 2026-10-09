@@ -22,7 +22,7 @@ const statusLabels = {
   evaluation_error: 'Evaluation error', running: 'Running', awaiting_review: 'Awaiting review',
   completed: 'Completed', interrupted: 'Interrupted',
 };
-const viewLabels = { assessment: 'Flow workspace', templates: 'Templates', history: 'Run history', tools: 'Tools & setup', run: 'Assessment findings' };
+const viewLabels = { assessment: 'Flow workspace', templates: 'Templates', history: 'Run history', tools: 'Tools & setup', run: 'Assessment results' };
 
 function node(tag, className, content) {
   const element = document.createElement(tag);
@@ -94,7 +94,7 @@ function setView(view, focus = false) {
     disposeReplay();
     state.replayOpenRunId = null;
     const panel = $('#recorded-replay-panel');
-    if (panel) panel.open = false;
+    if (panel) panel.hidden = true;
   }
   if (view === 'templates' && state.flowEditing) leaveFlowDraft(false);
   state.view = view;
@@ -102,7 +102,7 @@ function setView(view, focus = false) {
   document.body.classList.toggle('results-active', view === 'run');
   document.querySelectorAll('.view').forEach(element => { element.hidden = element.id !== `${view}-view`; });
   document.querySelectorAll('.nav-button').forEach(element => {
-    const active = element.dataset.view === view;
+    const active = element.dataset.view === view || (view === 'run' && element.dataset.view === 'assessment');
     element.classList.toggle('active', active);
     if (active) element.setAttribute('aria-current', 'page'); else element.removeAttribute('aria-current');
   });
@@ -580,6 +580,27 @@ function renderRun() {
   disposeReplay();
   content.replaceChildren();
   if (!run) { content.append(node('p', 'empty-copy', 'Select a saved assessment to view its findings.')); return; }
+  const toolbar = node('div', 'results-toolbar');
+  const label = node('div');
+  append(label, node('strong', '', run.subject.name), node('p', '', `Saved assessment · ${formatDate(run.startedAt)}`));
+  const newAssessment = button('New assessment', 'button secondary small', () => resetFlowDraft());
+  newAssessment.id = 'results-new-assessment';
+  newAssessment.disabled = state.submitting || state.flowMode === 'running';
+  newAssessment.title = 'Return to Project setup. Checks start only when you choose Run assessment in Flow.';
+  append(toolbar, label, newAssessment);
+  const switcher = node('div', 'results-pane-switch');
+  switcher.setAttribute('aria-label', 'Results view');
+  for (const [id, title] of [['findings', 'Findings'], ['replay', 'Replay what happened']]) {
+    const control = button(title, '', () => setResultsPane(id));
+    control.id = `results-${id}-tab`;
+    control.dataset.resultsPane = id;
+    control.setAttribute('aria-controls', id === 'replay' ? 'recorded-replay-panel' : 'results-findings');
+    switcher.append(control);
+  }
+  toolbar.insertBefore(switcher, newAssessment);
+  const report = node('section', 'results-findings');
+  report.id = 'results-findings';
+  report.setAttribute('aria-label', 'Assessment findings');
   const back = button('← All assessments', 'text-button run-back', () => setView('history', true));
   const intro = node('header', 'page-intro run-intro');
   const title = node('div');
@@ -597,7 +618,7 @@ function renderRun() {
     if (source.selectedInputs === 'changed') title.append(node('p', 'run-source-edit-note', 'Selected inputs changed locally after download. Findings use the captured local files; the pin identifies their downloaded origin.'));
   }
   const actions = node('div', 'run-actions');
-  append(actions, button('Replay what happened', 'button primary small', () => revealRecordedReplay()), button('View recorded flow', 'button secondary small', () => showRunFlow(run)), button('Refresh', 'button secondary small', () => loadRun(run.id)), button('Export HTML', 'button secondary small', event => downloadExport('html', event.currentTarget)), button('Export JSON', 'button secondary small', event => downloadExport('json', event.currentTarget)));
+  append(actions, button('Refresh', 'button secondary small', () => loadRun(run.id)), button('Export HTML', 'button secondary small', event => downloadExport('html', event.currentTarget)), button('Export JSON', 'button secondary small', event => downloadExport('json', event.currentTarget)));
   append(intro, title, actions);
   const counts = Object.fromEntries(Object.keys(statusLabels).filter(key => ['satisfied', 'not_satisfied', 'insufficient_evidence', 'not_applicable', 'evaluation_error'].includes(key)).map(key => [key, 0]));
   run.results.forEach(result => { if (result.status in counts) counts[result.status] += 1; });
@@ -647,19 +668,17 @@ function renderRun() {
   const findings = node('div', 'findings-stack');
   if (!run.results.length) findings.append(node('p', 'empty-copy', 'The engine has not recorded any criterion results yet.'));
   for (const result of run.results) findings.append(renderFinding(run, result));
-  const replay = createReplayPanel(run);
-  append(content, back, intro, summary, context, replay, heading, findings);
-  if (state.replayOpenRunId === run.id) {
-    replay.open = true;
-    loadRecordedReplay(run, replay, $('.recorded-replay-mount', replay));
-  }
+  const replay = createReplayPanel();
+  append(report, back, intro, summary, context, heading, findings);
+  append(content, toolbar, report, replay);
+  setResultsPane(state.replayOpenRunId === run.id ? 'replay' : 'findings', false);
   if (run.status === 'running' || run.status === 'interrupted') {
     const activity = node('section', 'panel run-limitations');
     append(activity, node('h2', '', 'Recorded run activity'));
     const events = node('div', 'event-list');
     (run.events || []).forEach(event => events.append(append(node('div', 'event-item'), node('span', 'event-dot'), node('div', '', `${event.message} · ${formatDate(event.timestamp)}`))));
     activity.append(events);
-    content.append(activity);
+    report.append(activity);
   }
   if (run.limitations?.length) {
     const limitations = node('section', 'panel run-limitations');
@@ -667,7 +686,7 @@ function renderRun() {
     const list = node('ul', 'finding-notes');
     run.limitations.forEach(item => list.append(node('li', '', item)));
     limitations.append(list);
-    content.append(limitations);
+    report.append(limitations);
   }
   if (state.view === 'run') renderAssessmentSteps();
 }
@@ -703,40 +722,39 @@ function loadReplayModule() {
   return replayModulePromise;
 }
 
-function revealRecordedReplay() {
+function setResultsPane(pane, focus = true) {
+  const replay = pane === 'replay';
   const panel = $('#recorded-replay-panel');
-  if (!panel || !state.run || state.view !== 'run') return;
-  panel.open = true;
-  $('summary', panel).focus({ preventScroll: true });
-  panel.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  const report = $('#results-findings');
+  if (!panel || !report || !state.run) return;
+  // Explicit pane navigation supersedes an earlier pending Flow/Results request.
+  if (focus) state.recordedNavigationRequest += 1;
+  $('#run-content').dataset.pane = replay ? 'replay' : 'findings';
+  report.hidden = replay;
+  panel.hidden = !replay;
+  document.querySelectorAll('[data-results-pane]').forEach(control => {
+    control.setAttribute('aria-pressed', String(control.dataset.resultsPane === (replay ? 'replay' : 'findings')));
+  });
+  if (replay) {
+    state.replayOpenRunId = state.run.id;
+    loadRecordedReplay(state.run, panel, $('.recorded-replay-mount', panel));
+  } else {
+    state.replayOpenRunId = null;
+    disposeReplay();
+    panel.dataset.replayLoading = 'false'; panel.dataset.replayLoaded = 'false';
+    $('.recorded-replay-mount', panel).replaceChildren();
+  }
+  if (focus) $(`#results-${replay ? 'replay' : 'findings'}-tab`).focus({ preventScroll: true });
 }
 
-function createReplayPanel(run) {
-  const panel = node('details', 'panel recorded-replay-panel');
+function createReplayPanel() {
+  const panel = node('section', 'panel recorded-replay-panel');
   panel.id = 'recorded-replay-panel';
-  const heading = node('summary', 'recorded-replay-heading');
-  const title = node('div');
-  append(title, node('h2', '', 'What happened?'), node('p', '', 'Step through the saved evaluation, its findings, and the evidence attached to each criterion.'));
-  append(heading, title, node('span', 'tag muted', 'Recorded replay'));
+  panel.setAttribute('aria-label', 'Recorded replay');
   const body = node('div', 'recorded-replay-body');
   const mount = node('div', 'recorded-replay-mount');
-  mount.append(node('p', 'empty-copy', 'Open this panel to load the recorded traversal.'));
-  const source = run.evidence.find(evidence => evidence.toolId === 'footprintjs');
-  const footer = node('div', 'recorded-replay-footer');
-  append(footer, node('p', '', 'Replaying a traversal does not rerun checks. A completed step can have a negative or inconclusive criterion finding.'));
-  if (source) footer.append(button('Inspect original workflow output ↗', 'text-button', () => openEvidence(run.id, source)));
-  append(body, mount, footer); append(panel, heading, body);
-  panel.addEventListener('toggle', () => {
-    if (panel.open) {
-      state.replayOpenRunId = run.id;
-      loadRecordedReplay(run, panel, mount);
-    } else if (state.replayOpenRunId === run.id) {
-      state.replayOpenRunId = null;
-      disposeReplay();
-      panel.dataset.replayLoading = 'false'; panel.dataset.replayLoaded = 'false';
-      mount.replaceChildren(node('p', 'empty-copy', 'Open this panel to load the recorded traversal.'));
-    }
-  });
+  mount.append(node('p', 'empty-copy', 'Select Replay what happened to load the saved traversal.'));
+  body.append(mount); panel.append(body);
   return panel;
 }
 
@@ -774,7 +792,7 @@ async function loadRecordedReplay(run, panel, container) {
   panel.dataset.replayLoading = 'true';
   const message = node('p', 'empty-copy', 'Loading the saved workflow from the local engine…'); message.setAttribute('role', 'status');
   container.replaceChildren(message);
-  const stillCurrent = () => request === state.replayRequest && panel.open && container.isConnected && state.run?.id === run.id;
+  const stillCurrent = () => request === state.replayRequest && !panel.hidden && container.isConnected && state.run?.id === run.id;
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
     const response = await fetch(`/api/runs/${encodeURIComponent(run.id)}/workflow`, { credentials: 'same-origin', signal: controller.signal });
@@ -910,7 +928,11 @@ function renderReviewForm(run, criterion, reviews) {
       syncRecordedFlow(reviewedRun);
       if (state.run?.id === run.id) state.run = reviewedRun;
       if (state.view === 'run' && state.run?.id === run.id) renderRun();
-      await refreshHistory();
+      try { await refreshHistory(); }
+      catch (error) {
+        if (state.view === 'run' && state.run?.id === run.id) showNotice(`Review saved. Run history could not refresh: ${error.message}`, true);
+        return;
+      }
       if (state.view === 'run' && state.run?.id === run.id) showNotice('Review recorded with reviewer attribution and rationale.');
     } catch (error) { showNotice(`Review for ${run.subject.name} (${run.id.slice(0, 8)}) was not saved. ${error.message}`, true); submit.disabled = false; submit.textContent = 'Record review'; }
     finally { state.reviewBusy = false; }
@@ -1484,6 +1506,8 @@ async function importTemplateFile(file) {
 }
 
 function updateFlowActions() {
+  const newAssessment = $('#results-new-assessment');
+  if (newAssessment) newAssessment.disabled = state.submitting || state.flowMode === 'running';
   if (!$('#flow-edit')) return;
   const recorded = state.flowMode !== 'draft';
   $('#flow-mode').textContent = state.flowEditing ? 'Unpublished draft' : recorded ? state.flowMode === 'running' ? 'Running' : 'Recorded flow' : 'Configure';

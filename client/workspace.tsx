@@ -2,15 +2,14 @@ import * as React from 'react';
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  Background, BackgroundVariant, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider,
+  Background, BackgroundVariant, MarkerType, ReactFlow, ReactFlowProvider,
   getNodesBounds, getViewportForBounds, useReactFlow,
 } from '@xyflow/react';
 import type { Edge, Node, NodeProps, NodeTypes, Viewport } from '@xyflow/react';
 import { graphFromStructure } from 'footprint-explainable-ui';
-import { createDagreTraceLayout } from 'footprint-explainable-ui/flowchart';
-import type { TraceGraph } from 'footprint-explainable-ui/flowchart';
 import type { CriterionDefinition, CriterionResult, CriterionStatus, RunEvent } from '../src/types.ts';
 import './workspace.css';
+import { AssessmentStageCard, ChartViewportControls, findingLabels, NODE_WIDTH, NODE_HEIGHT, placeAssessmentGraph } from './assessment-chart.tsx';
 
 export interface WorkspaceOptions {
   structure: unknown;
@@ -36,22 +35,11 @@ type StageData = Record<string, unknown> & {
   chosen: boolean;
 };
 type StageNode = Node<StageData>;
-const NODE_WIDTH = 320;
-const NODE_HEIGHT = 64;
-const ROW_GAP = 18;
 const MAX_STAGES = 128;
-const findingLabels: Record<CriterionStatus, string> = {
-  satisfied: 'Satisfied',
-  not_satisfied: 'Not satisfied',
-  insufficient_evidence: 'Insufficient evidence',
-  not_applicable: 'Not applicable',
-  evaluation_error: 'Evaluation error',
-};
 const traversalLabels: Record<TraversalState, string> = {
   configured: 'Configured', waiting: 'Not started', running: 'Running',
   completed: 'Completed', interrupted: 'Interrupted', unrecorded: 'Event not recorded',
 };
-const directedLayout = createDagreTraceLayout({ direction: 'TB', nodeWidth: NODE_WIDTH, nodeHeight: NODE_HEIGHT, rankSep: 28, nodeSep: 42 });
 
 function traversalState(id: string, options: WorkspaceOptions): TraversalState {
   if (options.mode === 'draft') return 'configured';
@@ -65,59 +53,15 @@ function traversalState(id: string, options: WorkspaceOptions): TraversalState {
   return state === 'running' && options.mode === 'interrupted' ? 'interrupted' : state;
 }
 
-// Vertical placement preserves the verified path. Original
-// stage identifiers and directed edges always come from the builder structure.
-function singlePath(graph: TraceGraph): string[] | null {
-  if (!graph.nodes.length || graph.edges.length !== graph.nodes.length - 1) return null;
-  const ids = new Set(graph.nodes.map(node => node.id));
-  const next = new Map<string, string>();
-  const incoming = new Set<string>();
-  for (const edge of graph.edges) {
-    if (!ids.has(edge.source) || !ids.has(edge.target) || next.has(edge.source) || incoming.has(edge.target) || edge.source === edge.target) return null;
-    next.set(edge.source, edge.target);
-    incoming.add(edge.target);
-  }
-  const roots = graph.nodes.filter(node => !incoming.has(node.id));
-  if (roots.length !== 1) return null;
-  const order: string[] = [];
-  let id: string | undefined = roots[0].id;
-  const visited = new Set<string>();
-  while (id && !visited.has(id)) {
-    visited.add(id);
-    order.push(id);
-    id = next.get(id);
-  }
-  return order.length === graph.nodes.length ? order : null;
-}
-
-function placedGraph(graph: TraceGraph): { graph: TraceGraph; order: string[] } {
-  const order = singlePath(graph);
-  if (!order) return { graph: directedLayout(graph), order: graph.nodes.map(node => node.id) };
-  const indices = new Map(order.map((id, index) => [id, index]));
-  const nodes = graph.nodes.map(node => ({ ...node, position: { x: 0, y: indices.get(node.id)! * (NODE_HEIGHT + ROW_GAP) } }));
-  const edges = graph.edges.map(edge => ({ ...edge, sourceHandle: 'out-bottom', targetHandle: 'in-top' }));
-  return { graph: { nodes, edges }, order };
-}
-
 function AssessmentNode({ data }: NodeProps<StageNode>) {
-  return (
-    <div className={`af-workspace-node traversal-${data.traversal}${data.chosen ? ' is-chosen' : ''}`} title={data.label}>
-      {[['top', Position.Top], ['bottom', Position.Bottom]].map(([side, position]) => (
-        <React.Fragment key={side}>
-          <Handle id={`in-${side}`} type="target" position={position as Position} isConnectable={false} />
-          <Handle id={`out-${side}`} type="source" position={position as Position} isConnectable={false} />
-        </React.Fragment>
-      ))}
-      <div className="af-workspace-node-head"><span className="af-workspace-node-order">{String(data.order).padStart(2, '0')}</span><div className="af-workspace-node-title">{data.label}</div></div>
-      <div className="af-workspace-node-bottom"><span className="af-workspace-traversal"><span aria-hidden="true" />{traversalLabels[data.traversal]}</span><span className="af-workspace-node-finding">{data.finding ? <><span className="af-workspace-finding-label">Finding</span><span className={`af-workspace-finding finding-${data.finding}`}>{findingLabels[data.finding]}</span></> : <span className="af-workspace-no-finding">{data.traversal === 'configured' ? 'Select to configure' : 'No finding recorded'}</span>}</span></div>
-    </div>
-  );
+  return <AssessmentStageCard label={data.label} order={data.order} traversal={traversalLabels[data.traversal]} tone={data.traversal} chosen={data.chosen} finding={data.finding} emptyFinding={data.traversal === 'configured' ? 'Select to configure' : 'No finding recorded'} />;
 }
+
 const nodeTypes: NodeTypes = { assessmentStage: AssessmentNode };
 
 function ViewportControls({ onFit }: { onFit: () => void }) {
   const { zoomIn, zoomOut } = useReactFlow();
-  return <div className="af-workspace-canvas-controls nodrag nopan"><button type="button" onClick={() => { void zoomOut({ duration: 120 }); }} aria-label="Zoom out">−</button><button type="button" onClick={() => { void zoomIn({ duration: 120 }); }} aria-label="Zoom in">+</button><button type="button" className="af-workspace-fit" onClick={onFit}>Fit chart</button></div>;
+  return <ChartViewportControls actions={{ zoomIn: () => { void zoomIn({ duration: 120 }); }, zoomOut: () => { void zoomOut({ duration: 120 }); }, fit: onFit }} />;
 }
 
 function WorkspaceHelp() {
@@ -155,7 +99,7 @@ function WorkspaceCanvas({ nodes, edges, topologyKey, onSelect }: { nodes: Stage
   useEffect(() => {
     fit();
   }, [fit]);
-  return <div className="af-workspace-canvas-group"><ReactFlowProvider><div className="af-workspace-canvas" ref={canvas}>
+  return <div className="af-workspace-canvas-group"><ReactFlowProvider><div className="af-workspace-chart-controls"><ViewportControls onFit={fit} /><WorkspaceHelp /></div><div className="af-workspace-canvas" ref={canvas}>
     <ReactFlow
       nodes={nodes} edges={edges} nodeTypes={nodeTypes}
       viewport={viewport} onViewportChange={setViewport}
@@ -168,7 +112,7 @@ function WorkspaceCanvas({ nodes, edges, topologyKey, onSelect }: { nodes: Stage
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#d4d0c6" />
     </ReactFlow>
-  </div><div className="af-workspace-footer"><ViewportControls onFit={fit} /><WorkspaceHelp /></div></ReactFlowProvider></div>;
+  </div></ReactFlowProvider></div>;
 }
 
 function Workspace(options: WorkspaceOptions) {
@@ -178,7 +122,7 @@ function Workspace(options: WorkspaceOptions) {
       const graph = graphFromStructure(options.structure);
       if (!graph.nodes.length) return { error: 'The builder returned no assessment stages.' };
       if (graph.nodes.length > MAX_STAGES) return { error: `This chart exceeds the ${MAX_STAGES}-stage interactive limit.` };
-      return { ...placedGraph(graph), error: undefined };
+      return { ...placeAssessmentGraph(graph), error: undefined };
     } catch {
       return { error: 'This assessment structure could not be displayed. The stage details remain available.' };
     }

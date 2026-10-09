@@ -83,3 +83,61 @@
 @media(max-width:680px){.af-replay-header{gap:10px}.af-replay-header strong{font-size:12px}.af-replay-controls{padding:11px}.af-replay-jump{align-items:stretch;flex-direction:column;gap:5px}.af-replay-jump select{width:100%;font-size:11px}.af-replay [data-fp="tt-ticks"]{flex-basis:100%;min-height:22px}.af-replay-graph-canvas{height:480px}.af-replay-surface-heading{padding:10px 12px;align-items:flex-start;flex-direction:column;gap:3px}.af-replay-step-context{padding:16px}.af-replay-step-context>h3{font-size:15px}.af-replay-state-inspector{height:300px}.af-replay-gantt{--af-timeline-label-width:145px}.af-replay-gantt [role="option"]>span:first-child{font-size:11px!important}}
 @media(prefers-reduced-motion:no-preference){@keyframes fp-pulse{0%,100%{opacity:.4;transform:scale(1)}50%{opacity:.15;transform:scale(1.06)}}@keyframes fp-blink{0%,100%{opacity:1}50%{opacity:.3}}}
 @media(prefers-reduced-motion:reduce){@keyframes fp-pulse{0%,100%{opacity:.3}}@keyframes fp-blink{0%,100%{opacity:1}}.af-replay *{transition:none!important;scroll-behavior:auto!important}}
+
+/* Recorded replay uses the same authored cards as the assessment workspace.
+   Only the saved overlay and cursor decide which stages have been visited. */
+.af-replay { height:100%; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
+.af-replay-header { flex-shrink:0; padding:0 0 8px; }
+.af-replay-controls { flex-shrink:0; padding:6px 10px; margin-bottom:8px; }
+.af-replay-jump { margin-top:6px; }
+.af-replay-jump select { min-height:30px; padding:5px 8px; }
+.af-replay-main { flex:1 1 0; min-height:0; grid-template-columns:minmax(0,1fr) minmax(280px,.8fr); align-items:stretch; }
+.af-replay-graph { display:flex; flex-direction:column; height:100%; min-height:0; }
+.af-replay-graph > .af-replay-surface-heading { flex-shrink:0; padding:6px 8px; gap:8px; flex-direction:row; align-items:center; flex-wrap:wrap; }
+.af-replay-graph .af-replay-surface-heading > div > span { display:block; font-size:10px; color:#626b72; }
+.af-replay-graph-canvas { flex:1 1 0; min-height:0; height:auto; }
+.af-replay-graph .react-flow__node { opacity:1!important; }
+.af-replay-graph-help { flex-shrink:0; border-top:1px solid #d4d0c6; font-size:10px; color:#626b72; }
+.af-replay-graph-help > summary { padding:6px 10px; color:#2752ad; cursor:pointer; }
+.af-replay-graph-help[open] { max-height:130px; overflow:auto; }
+.af-replay-graph-help .af-replay-graph-legend { border:0; padding-top:0; }
+.af-replay-step-context { height:100%; min-height:0; max-height:none; overflow:auto; }
+.af-replay-recorded-details { margin-top:18px; border-top:1px solid #d4d0c6; padding-top:12px; }
+.af-replay-recorded-details > summary { color:#2752ad; font-size:12px; font-weight:650; cursor:pointer; }
+.af-replay-recorded-details .af-replay-surface-heading { flex-direction:column; align-items:flex-start; gap:4px; }
+.af-replay-recorded-details .af-replay-gantt { --af-timeline-label-width:145px; }
+.af-replay-pane-tabs { display:none; }
+.af-replay .traversal-future .af-workspace-traversal { color:#626b72; }
+.af-replay .traversal-future .af-workspace-node-title { color:#162a40; }
+@media(max-width:900px) {
+  .af-replay-pane-tabs { display:flex; flex-shrink:0; gap:5px; margin-bottom:8px; }
+  .af-replay-pane-tabs button { flex:1; border:1px solid #d4d0c6; border-radius:4px; background:#fff; padding:6px 10px; color:#59656d; font-size:12px; }
+  .af-replay-pane-tabs button[aria-pressed="true"] { color:#2752ad; border-color:#b5c7e8; background:#edf1fb; font-weight:650; }
+  .af-replay-main { display:block; position:relative; }
+  .af-replay-main > .af-replay-graph, .af-replay-main > .af-replay-step-context { position:absolute; inset:0; width:100%; height:100%; }
+  .af-replay[data-pane="chart"] .af-replay-step-context, .af-replay[data-pane="details"] .af-replay-graph { visibility:hidden; pointer-events:none; }
+  .af-replay-header p { font-size:11px; }
+}
+@media(max-width:600px) {
+  .af-replay-graph .af-replay-surface-heading > div > span { display:none; }
+  .af-replay-header { gap:8px; }
+  .af-replay-header strong { font-size:12px; }
+  .af-replay-controls { padding:5px 8px; }
+}
+
+/* Keep saved-playback chrome compact so the authored chart has reading space. */
+.af-replay-header { justify-content:flex-start; align-items:baseline; flex-wrap:wrap; gap:4px 10px; padding:0 0 5px; }
+.af-replay-header strong { font-size:12px; line-height:18px; }
+.af-replay-header > span { font-size:11px; line-height:18px; color:#626b72; }
+.af-replay-controls { display:flex; align-items:center; gap:10px; padding:5px 8px; margin-bottom:6px; }
+.af-replay [data-fp="time-travel-controls"] { flex:1 1 0; min-width:0; flex-wrap:nowrap; gap:5px; }
+.af-replay [data-fp="time-travel-controls"] > button { min-height:30px; padding:4px 7px; flex-shrink:0; }
+.af-replay [data-fp="tt-ticks"] { min-width:65px; }
+.af-replay-jump { flex:0 1 245px; min-width:205px; margin:0; gap:6px; font-size:10px; white-space:nowrap; }
+.af-replay-jump select { min-height:30px; padding:4px 7px; font-size:11px; }
+@media(max-width:600px) {
+  .af-replay-controls { flex-direction:column; align-items:stretch; gap:4px; }
+  .af-replay [data-fp="time-travel-controls"] { flex:none; }
+  .af-replay [data-fp="tt-ticks"] { flex-basis:auto; }
+  .af-replay-jump { flex:none; width:100%; min-width:0; flex-direction:row; align-items:center; gap:6px; }
+}

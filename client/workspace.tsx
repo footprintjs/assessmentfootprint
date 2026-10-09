@@ -92,7 +92,7 @@ function WorkspaceCanvas({ nodes, edges, topologyKey, onSelect }: { nodes: Stage
     return () => observer.disconnect();
   }, []);
   const fit = useCallback(() => {
-    if (size.width > 0 && size.height > 0) setViewport(getViewportForBounds(bounds, size.width, size.height, 0.01, 1, 0.10));
+    if (size.width > 0 && size.height > 0) setViewport(getViewportForBounds(bounds, size.width, size.height, 0.01, 1.75, 0.18));
   }, [bounds, size.width, size.height]);
   // Fit the authored topology to the bounded canvas. Selection, findings and
   // live events do not change these bounds, so a user's pan or zoom is retained.

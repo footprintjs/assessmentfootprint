@@ -212,16 +212,18 @@ test('an explicit Results pane selection supersedes a pending recorded Flow', as
   assert.deepEqual(h.notices, []);
 });
 
-test('leaving Replay aborts and invalidates a deferred workflow; reopening mounts only a fresh response', async () => {
+function replayHarness() {
   const selected = run('assessment');
   const state = {
-    run: selected, view: 'run', recordedNavigationRequest: 0,
+    run: selected, view: 'run', viewRequest: 0, recordedNavigationRequest: 0, flowEditing: false,
+    resultsPaneSelection: null as { runId: string; pane: string } | null,
+    replayCursor: null as { runId: string; index: number } | null,
     replayRequest: 0, replayAbort: null as AbortController | null,
     replayUnmount: null as (() => void) | null, replayOpenRunId: null as string | null,
   };
-  const panel = testElement(); panel.hidden = true;
+  let panel = testElement(); panel.hidden = true;
   const report = testElement();
-  const container = testElement();
+  let container = testElement();
   const content = testElement();
   const controls = ['findings', 'replay'].map(pane => {
     const control = testElement(); control.dataset.resultsPane = pane; return control;
@@ -229,57 +231,116 @@ test('leaving Replay aborts and invalidates a deferred workflow; reopening mount
   const requests: Array<{ path: string; signal: AbortSignal; resolve: (value: unknown) => void }> = [];
   const pending: Promise<void>[] = [];
   const mounted: unknown[] = [];
+  const mountOptions: Array<{ initialSelectedIndex: number; onSelectedIndexChange: (index: number) => void }> = [];
   const fallbacks: unknown[] = [];
   let unmounted = 0;
   const elements = new Map([
     ['#recorded-replay-panel', panel], ['#results-findings', report],
     ['.recorded-replay-mount', container], ['#run-content', content],
     ['#results-findings-tab', controls[0]], ['#results-replay-tab', controls[1]],
+    ['#view-label', testElement()],
   ]);
   const context = createContext({
     state, AbortController, setTimeout, clearTimeout, pending,
     $: (selector: string) => { const element = elements.get(selector); assert.ok(element, selector); return element; },
-    document: { querySelectorAll: () => controls },
+    document: { body: { classList: { toggle() {} } }, querySelectorAll: (selector: string) => selector === '[data-results-pane]' ? controls : [] },
     node: () => testElement(),
+    append: (parent: ReturnType<typeof testElement>, ...children: unknown[]) => { parent.append(...children); return parent; },
+    viewLabels: { run: 'Results', assessment: 'Flow', history: 'History' },
+    renderAssessmentSteps() {}, updateFlowGraph() {},
     fetch: (path: string, options: { signal: AbortSignal }) => new Promise(resolve => requests.push({ path, signal: options.signal, resolve })),
     loadReplayStyles: async () => {},
-    loadReplayModule: async () => ({ mountReplay(_container: unknown, options: { workflow: unknown }) { mounted.push(options.workflow); return () => { unmounted += 1; }; } }),
+    loadReplayModule: async () => ({ mountReplay(_container: unknown, options: { workflow: unknown; initialSelectedIndex: number; onSelectedIndexChange: (index: number) => void }) { mounted.push(options.workflow); mountOptions.push(options); return () => { unmounted += 1; }; } }),
     renderWorkflowFallback: (_run: unknown, value: unknown) => fallbacks.push(value),
     openEvidence() {},
   });
-  runInContext(['setResultsPane', 'loadRecordedReplay', 'disposeReplay'].map(sourceOf).join('\n'), context);
+  runInContext(['setView', 'selectedResultsPane', 'setResultsPane', 'loadRecordedReplay', 'disposeReplay'].map(sourceOf).join('\n'), context);
   runInContext('const shippingLoader = loadRecordedReplay; loadRecordedReplay = (...args) => { const load = shippingLoader(...args); pending.push(load); return load; };', context);
-  runInContext("setResultsPane('replay')", context);
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].path, '/api/runs/assessment/workflow');
-  assert.equal(requests[0].signal.aborted, false);
-  runInContext("setResultsPane('findings')", context);
-  assert.equal(requests[0].signal.aborted, true);
-  assert.equal(panel.hidden, true);
-  assert.equal(report.hidden, false);
-  assert.equal(state.replayOpenRunId, null);
-  assert.deepEqual(container.children, []);
+  return {
+    state, requests, pending, mounted, mountOptions, fallbacks,
+    get panel() { return panel; }, get container() { return container; }, report,
+    get unmounted() { return unmounted; },
+    pane: (pane: string) => runInContext(`setResultsPane(${JSON.stringify(pane)})`, context),
+    view: (view: string) => runInContext(`setView(${JSON.stringify(view)})`, context),
+    selectedPane: () => runInContext('selectedResultsPane(state.run)', context) as string,
+    restorePane: () => runInContext('setResultsPane(selectedResultsPane(state.run), false)', context),
+    // renderRun recreates the report SECTION and mount. Keep that fixture
+    // separate from the shipping state/selection functions under test.
+    rebuildReportFixture() {
+      container.isConnected = false;
+      panel = testElement(); panel.hidden = true; container = testElement();
+      elements.set('#recorded-replay-panel', panel); elements.set('.recorded-replay-mount', container);
+    },
+  };
+}
+
+test('leaving Replay aborts and invalidates a deferred workflow; reopening mounts only a fresh response', async () => {
+  const h = replayHarness();
+  h.pane('replay');
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.requests[0].path, '/api/runs/assessment/workflow');
+  assert.equal(h.requests[0].signal.aborted, false);
+  h.pane('findings');
+  assert.equal(h.requests[0].signal.aborted, true);
+  assert.equal(h.panel.hidden, true);
+  assert.equal(h.report.hidden, false);
+  assert.equal(h.state.replayOpenRunId, null);
+  assert.deepEqual(h.container.children, []);
   // Deliberately deliver a response despite cancellation to exercise the
   // request/pane guards, not only the browser's AbortSignal behavior.
-  requests[0].resolve({ ok: true, json: async () => workflow('stale') });
-  await pending[0];
-  assert.deepEqual(mounted, []);
-  assert.deepEqual(fallbacks, []);
-  runInContext("setResultsPane('replay')", context);
-  assert.equal(requests.length, 2);
-  assert.notEqual(requests[1].signal, requests[0].signal);
-  assert.equal(requests[1].signal.aborted, false);
+  h.requests[0].resolve({ ok: true, json: async () => workflow('stale') });
+  await h.pending[0];
+  assert.deepEqual(h.mounted, []);
+  assert.deepEqual(h.fallbacks, []);
+  h.pane('replay');
+  assert.equal(h.requests.length, 2);
+  assert.notEqual(h.requests[1].signal, h.requests[0].signal);
+  assert.equal(h.requests[1].signal.aborted, false);
   const fresh = workflow('fresh');
-  requests[1].resolve({ ok: true, json: async () => fresh });
-  await pending[1];
-  assert.deepEqual(mounted, [fresh]);
-  assert.equal(panel.dataset.replayLoaded, 'true');
-  assert.equal(state.replayAbort, null);
-  runInContext("setResultsPane('findings')", context);
-  assert.equal(unmounted, 1);
-  assert.equal(state.replayUnmount, null);
-  assert.equal(panel.dataset.replayLoaded, 'false');
-  assert.equal(panel.dataset.replayLoading, 'false');
+  h.requests[1].resolve({ ok: true, json: async () => fresh });
+  await h.pending[1];
+  assert.deepEqual(h.mounted, [fresh]);
+  assert.equal(h.panel.dataset.replayLoaded, 'true');
+  assert.equal(h.state.replayAbort, null);
+  h.pane('findings');
+  assert.equal(h.unmounted, 1);
+  assert.equal(h.state.replayUnmount, null);
+  assert.equal(h.panel.dataset.replayLoaded, 'false');
+  assert.equal(h.panel.dataset.replayLoading, 'false');
+});
+
+test('returning from Flow restores the same-run Results pane and replay cursor without carrying them into another run', async () => {
+  const h = replayHarness();
+  h.pane('replay');
+  h.requests[0].resolve({ ok: true, json: async () => workflow('assessment') });
+  await h.pending[0];
+  assert.equal(h.mountOptions[0].initialSelectedIndex, 0);
+  h.mountOptions[0].onSelectedIndexChange(3);
+  assert.equal(h.state.replayCursor?.index, 3);
+  h.view('assessment');
+  assert.equal(h.unmounted, 1);
+  assert.equal(h.state.replayOpenRunId, null);
+  assert.equal(h.selectedPane(), 'replay');
+  h.rebuildReportFixture(); h.view('run'); h.restorePane();
+  assert.equal(h.panel.hidden, false);
+  h.requests[1].resolve({ ok: true, json: async () => workflow('assessment') });
+  await h.pending[1];
+  assert.equal(h.mountOptions[1].initialSelectedIndex, 3);
+  h.view('history'); h.state.run = run('other-assessment');
+  assert.equal(h.selectedPane(), 'findings');
+  h.rebuildReportFixture(); h.view('run'); h.restorePane();
+  assert.equal(h.panel.hidden, true);
+  assert.equal(h.report.hidden, false);
+  assert.equal(h.requests.length, 2, 'opening another run must not automatically load its replay');
+  h.pane('replay');
+  h.requests[2].resolve({ ok: true, json: async () => workflow('other-assessment') });
+  await h.pending[2];
+  assert.equal(h.mountOptions[2].initialSelectedIndex, 0);
+  h.mountOptions[2].onSelectedIndexChange(1);
+  h.mountOptions[0].onSelectedIndexChange(8);
+  assert.equal(h.state.replayCursor?.runId, 'other-assessment', 'a callback from an old replay cannot replace the current cursor');
+  assert.equal(h.state.replayCursor?.index, 1);
+  h.pane('findings');
 });
 
 test('a saved review remains successful when the auxiliary history refresh fails', async () => {

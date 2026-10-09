@@ -141,3 +141,25 @@
   .af-replay [data-fp="tt-ticks"] { flex-basis:auto; }
   .af-replay-jump { flex:none; width:100%; min-width:0; flex-direction:row; align-items:center; gap:6px; }
 }
+
+/* Flow and saved replay share the same two chrome rows and canvas frame. */
+.af-replay-main { grid-template-columns:minmax(0,1fr) 310px; gap:18px; }
+.af-replay-graph { overflow:hidden; }
+.af-replay-graph .af-workspace-toolbar { padding:7px 14px; background:#243b54; color:#fff; align-items:center; }
+.af-replay-graph .af-workspace-toolbar strong { color:#fff; font-size:13px; }
+.af-replay-graph .af-workspace-toolbar > div > span { color:#c7d3df; font-size:11px; line-height:1.6; max-width:190px; }
+.af-replay-graph .af-workspace-toolbar label { display:flex; align-items:center; gap:2px; max-width:260px; white-space:nowrap; color:#d0d9e4; font-size:10px; }
+.af-replay-graph .af-workspace-toolbar select { min-height:32px; max-width:200px; font-size:11px; background:#fffefa; border-color:#607285; }
+.af-replay-playback .af-replay-play-button { width:47px; font-size:11px; font-weight:650; }
+.af-replay-graph .af-workspace-chart-controls { align-items:center; justify-content:space-between; }
+.af-replay-pane-tabs { margin:0; padding:0 0 10px; gap:4px; }
+.af-replay-pane-tabs button { min-height:36px; border:1px solid #c6c5bd; border-radius:3px; background:#f8f6f0; color:#4b5d70; font-size:12px; }
+.af-replay-pane-tabs button[aria-pressed="true"] { color:#204b9f; background:#e9eef8; border-color:#9aaed0; }
+@media(max-width:1150px) { .af-replay-main { grid-template-columns:minmax(0,1fr) 280px; gap:14px; } }
+@media(max-width:900px) { .af-replay-main { display:block; } }
+@media(max-width:680px) {
+  .af-replay-graph .af-workspace-toolbar { flex-wrap:nowrap; padding:8px 10px; gap:8px; }
+  .af-replay-graph .af-workspace-toolbar > div { display:none; }
+  .af-replay-graph .af-workspace-toolbar label { width:100%; max-width:none; display:flex; align-items:center; gap:8px; }
+  .af-replay-graph .af-workspace-toolbar select { width:100%; max-width:none; min-height:32px; }
+}

@@ -10,7 +10,7 @@ const state = {
   viewRequest: 0, flow: null, flowHandle: null, flowMounting: null, flowRequest: 0, flowTimer: null, flowSelected: '_freeze-inputs',
   flowEditing: false, flowEditorIndex: null, flowMode: 'draft', flowEvents: [], flowResults: [], flowRun: null, flowValid: false,
   assessmentStep: 'project', flowPane: 'chart',
-  recordedNavigationRequest: 0,
+  recordedNavigationRequest: 0, resultsPaneSelection: null, replayCursor: null,
   replayRequest: 0, replayAbort: null, replayUnmount: null, replayOpenRunId: null,
 };
 let replayModulePromise = null;
@@ -582,7 +582,9 @@ function renderRun() {
   if (!run) { content.append(node('p', 'empty-copy', 'Select a saved assessment to view its findings.')); return; }
   const toolbar = node('div', 'results-toolbar');
   const label = node('div');
-  append(label, node('strong', '', run.subject.name), node('p', '', `Saved assessment · ${formatDate(run.startedAt)}`));
+  const runCaption = node('p', '', `Saved assessment · ${formatDate(run.startedAt)}`);
+  runCaption.title = runCaption.textContent;
+  append(label, node('strong', '', run.subject.name), runCaption);
   const newAssessment = button('New assessment', 'button secondary small', () => resetFlowDraft());
   newAssessment.id = 'results-new-assessment';
   newAssessment.disabled = state.submitting || state.flowMode === 'running';
@@ -671,7 +673,7 @@ function renderRun() {
   const replay = createReplayPanel();
   append(report, back, intro, summary, context, heading, findings);
   append(content, toolbar, report, replay);
-  setResultsPane(state.replayOpenRunId === run.id ? 'replay' : 'findings', false);
+  setResultsPane(selectedResultsPane(run), false);
   if (run.status === 'running' || run.status === 'interrupted') {
     const activity = node('section', 'panel run-limitations');
     append(activity, node('h2', '', 'Recorded run activity'));
@@ -722,6 +724,11 @@ function loadReplayModule() {
   return replayModulePromise;
 }
 
+function selectedResultsPane(run) {
+  if (state.replayOpenRunId === run.id) return 'replay';
+  return state.resultsPaneSelection?.runId === run.id ? state.resultsPaneSelection.pane : 'findings';
+}
+
 function setResultsPane(pane, focus = true) {
   const replay = pane === 'replay';
   const panel = $('#recorded-replay-panel');
@@ -729,7 +736,8 @@ function setResultsPane(pane, focus = true) {
   if (!panel || !report || !state.run) return;
   // Explicit pane navigation supersedes an earlier pending Flow/Results request.
   if (focus) state.recordedNavigationRequest += 1;
-  $('#run-content').dataset.pane = replay ? 'replay' : 'findings';
+  state.resultsPaneSelection = { runId: state.run.id, pane: replay ? 'replay' : 'findings' };
+  $('#run-content').dataset.pane = state.resultsPaneSelection.pane;
   report.hidden = replay;
   panel.hidden = !replay;
   document.querySelectorAll('[data-results-pane]').forEach(control => {
@@ -790,8 +798,16 @@ async function loadRecordedReplay(run, panel, container) {
   const controller = new AbortController();
   state.replayAbort?.abort(); state.replayAbort = controller;
   panel.dataset.replayLoading = 'true';
-  const message = node('p', 'empty-copy', 'Loading the saved workflow from the local engine…'); message.setAttribute('role', 'status');
-  container.replaceChildren(message);
+  const loading = node('div', 'replay-loading');
+  const tabs = node('div', 'replay-loading-tabs');
+  tabs.setAttribute('aria-hidden', 'true');
+  const frame = node('div', 'replay-loading-frame');
+  const chart = node('div', 'replay-loading-chart');
+  const message = node('p', 'empty-copy', 'Loading the saved workflow…'); message.setAttribute('role', 'status');
+  chart.append(message);
+  append(frame, chart, node('div', 'replay-loading-inspector'));
+  append(loading, tabs, frame);
+  container.replaceChildren(loading);
   const stillCurrent = () => request === state.replayRequest && !panel.hidden && container.isConnected && state.run?.id === run.id;
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
@@ -807,7 +823,13 @@ async function loadRecordedReplay(run, panel, container) {
       const [, module] = await Promise.all([loadReplayStyles(), loadReplayModule()]);
       if (!stillCurrent()) return;
       container.replaceChildren();
-      state.replayUnmount = module.mountReplay(container, { run, workflow, onEvidence: openEvidence });
+      state.replayUnmount = module.mountReplay(container, {
+        run, workflow, onEvidence: openEvidence,
+        initialSelectedIndex: state.replayCursor?.runId === run.id ? state.replayCursor.index : 0,
+        onSelectedIndexChange: index => {
+          if (state.run?.id === run.id && state.replayOpenRunId === run.id) state.replayCursor = { runId: run.id, index };
+        },
+      });
     } else renderWorkflowFallback(run, workflow, container);
     panel.dataset.replayLoaded = 'true';
   } catch (error) {

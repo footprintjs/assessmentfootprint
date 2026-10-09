@@ -1,12 +1,11 @@
 import * as React from 'react';
-import { Component, useEffect, useMemo, useState } from 'react';
+import { Component, useEffect, useId, useLayoutEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { useReactFlow, useStore, useStoreApi } from '@xyflow/react';
+import { useNodesInitialized, useReactFlow, useStore, useStoreApi } from '@xyflow/react';
 import type { Node, NodeProps, NodeTypes } from '@xyflow/react';
 import {
   ExplainableProvider,
   GanttTimeline,
-  TimeTravelControls,
   ValueInspector,
   useExplainableRun,
 } from 'footprint-explainable-ui';
@@ -30,6 +29,8 @@ export interface ReplayOptions {
   run: AssessmentRun;
   workflow: ReplayWorkflow;
   onEvidence: (runId: string, evidence: EvidenceRecord) => void;
+  initialSelectedIndex?: number;
+  onSelectedIndexChange?: (index: number) => void;
 }
 
 const labels: Record<CriterionStatus, string> = {
@@ -97,13 +98,21 @@ function ReplayViewportBridge({ onReady }: { onReady: (actions: ChartViewportAct
   const instance = useReactFlow();
   const store = useStoreApi();
   const minZoom = useStore(state => state.minZoom);
-  useEffect(() => {
+  const maxZoom = useStore(state => state.maxZoom);
+  const width = useStore(state => state.width);
+  const height = useStore(state => state.height);
+  const initialized = useNodesInitialized();
+  useLayoutEffect(() => {
     // TracedFlow 0.38 supplies a 0.1 minimum; the public store setter allows
     // the same overview range as the authored assessment workspace.
     if (minZoom !== 0.01) store.getState().setMinZoom(0.01);
-    onReady({ zoomIn: () => { void instance.zoomIn({ duration: 120 }); }, zoomOut: () => { void instance.zoomOut({ duration: 120 }); }, fit: () => { void instance.fitView({ padding: 0.1, minZoom: 0.01, maxZoom: 1 }); } });
+    if (maxZoom !== 1.75) store.getState().setMaxZoom(1.75);
+    onReady({ zoomIn: () => { void instance.zoomIn({ duration: 120 }); }, zoomOut: () => { void instance.zoomOut({ duration: 120 }); }, fit: () => { void instance.fitView({ padding: 0.18, minZoom: 0.01, maxZoom: 1.75, duration: 0 }); } });
     return () => onReady(null);
-  }, [instance, store, minZoom, onReady]);
+  }, [instance, store, minZoom, maxZoom, onReady]);
+  useLayoutEffect(() => {
+    if (initialized && width > 0 && height > 0) void instance.fitView({ padding: 0.18, minZoom: 0.01, maxZoom: 1.75, duration: 0 });
+  }, [initialized, width, height, instance]);
   return null;
 }
 
@@ -117,7 +126,17 @@ class ReplayBoundary extends Component<{ children: React.ReactNode }, { failed: 
 }
 
 function ReplayGraph({ run, onInspect }: { run: AssessmentRun; onInspect: () => void }) {
-  const { traceGraph, runtimeOverlay, snapshots, selectedSnapshot, selectedIndex, selectIndex } = useExplainableRun();
+  const { traceGraph, runtimeOverlay, snapshots, selectedSnapshot, selectedIndex, selectIndex, recording } = useExplainableRun();
+  const pickerId = useId();
+  const [playing, setPlaying] = useState(false);
+  const presentation = useMemo(() => presentationSteps(snapshots, run, recording), [snapshots, run, recording]);
+  const displaySnapshots = presentation.steps;
+  useEffect(() => {
+    if (!playing) return;
+    if (selectedIndex >= snapshots.length - 1) { setPlaying(false); return; }
+    const timer = window.setTimeout(() => selectIndex(selectedIndex + 1), 650);
+    return () => window.clearTimeout(timer);
+  }, [playing, selectedIndex, snapshots.length, selectIndex]);
   const [actions, setActions] = useState<ChartViewportActions | null>(null);
   const graph = useMemo(() => {
     const order = placeAssessmentGraph(traceGraph).order;
@@ -132,12 +151,13 @@ function ReplayGraph({ run, onInspect }: { run: AssessmentRun; onInspect: () => 
   const selectStage = (id: string) => {
     const matches = snapshots.map((snapshot, index) => ({ id: stageId(snapshot), index })).filter(item => item.id === id);
     const match = matches.find(item => item.index >= selectedIndex) || matches[matches.length - 1];
-    if (match) { selectIndex(match.index); onInspect(); }
+    if (match) { setPlaying(false); selectIndex(match.index); onInspect(); }
   };
   return <section className="af-replay-graph" aria-label="Recorded execution graph">
-    <header className="af-replay-surface-heading"><div><h3>Recorded traversal</h3><span>Click a step to inspect it</span></div><ChartViewportControls actions={actions} /></header>
+    <div className="af-workspace-toolbar"><div><strong>Recorded replay</strong><span>{snapshots.length} saved steps · read-only</span></div><label htmlFor={pickerId}>Replay step<select id={pickerId} value={selectedIndex} onChange={event => { setPlaying(false); selectIndex(Number(event.currentTarget.value)); }}>{displaySnapshots.map((snapshot, index) => <option key={`${snapshot.runtimeStageId || snapshot.stageName}-${index}`} value={index}>{index + 1}. {snapshot.stageLabel}</option>)}</select></label></div>
+    <div className="af-workspace-chart-controls"><div className="af-replay-playback af-workspace-canvas-controls"><button type="button" disabled={selectedIndex <= 0} onClick={() => { setPlaying(false); selectIndex(selectedIndex - 1); }} aria-label="Previous saved step" title="Previous saved step">‹</button><button type="button" className="af-replay-play-button" disabled={snapshots.length < 2} onClick={() => { if (!playing && selectedIndex >= snapshots.length - 1) selectIndex(0); setPlaying(value => !value); }} aria-label={playing ? 'Pause saved replay' : 'Play saved evaluation steps'} title={playing ? 'Pause saved replay' : 'Play saved steps; no checks are rerun'}>{playing ? 'Pause' : 'Play'}</button><button type="button" disabled={selectedIndex >= snapshots.length - 1} onClick={() => { setPlaying(false); selectIndex(selectedIndex + 1); }} aria-label="Next saved step" title="Next saved step">›</button></div><ChartViewportControls actions={actions} /></div>
     <div className="af-replay-graph-canvas">{graph.nodes.length ? <TracedFlow graph={graph} overlay={runtimeOverlay} scrubIndex={scrubIndex < 0 ? selectedIndex : scrubIndex} nodeTypes={nodeTypes} layout={layoutAssessmentGraph} onNodeClick={selectStage} theme="light" style={{ minHeight: 0 }} colors={{ active: '#2752ad', done: '#37684d', default: '#162a40', error: '#ad4d43' }}><ReplayViewportBridge onReady={setActions} /></TracedFlow> : <p className="af-replay-empty">This recording has no saved structure, so a graph is unavailable.</p>}</div>
-    <details className="af-replay-graph-help"><summary>About replay status</summary><p className="af-replay-graph-legend"><span className="af-replay-legend-dot visited" /> Visited <span className="af-replay-legend-dot current" /> Selected step <span>These colours describe traversal. At-step findings come from saved evaluation state; later reviews remain separate.</span></p></details>
+
   </section>;
 }
 
@@ -181,6 +201,7 @@ function StepContext({ run, onEvidence }: { run: AssessmentRun; onEvidence: Repl
           {latestReview ? <section className="af-replay-later-review"><h4>Later human review</h4><StatusBadge status={latestReview.decision} /><p className="af-replay-review-attribution">{latestReview.reviewer} · {formatDate(latestReview.createdAt)}</p><p>{latestReview.rationale}</p><small>This attributed review is separate from the automated traversal. It has not changed the recorded step.</small></section> : finding && (run.template?.criteria.find(item => item.id === id)?.requiresReview || criterion.mode === 'expert') ? <section className="af-replay-later-review"><h4>Human review</h4><p>No attributed review has been recorded for this criterion. Add your review in its finding below.</p></section> : null}
         </>
       )}
+      <details className="af-replay-rule"><summary>About recorded replay</summary><p>Playback moves through the saved automated evaluation and never reruns checks. Visited and selected labels describe traversal. At-step findings come from saved evaluation state; later human reviews remain separate. File collection happened before this chart.</p></details>
       <RecordedDetails run={run} />
     </aside>
   );
@@ -195,18 +216,19 @@ function RecordedDetails({ run }: { run: AssessmentRun }) {
       <details className="af-replay-technical-state"><summary>Inspect recorded state and changes</summary><p>This is the saved evaluation state at the selected step. Human reviews are stored separately.</p><div className="af-replay-state-inspector"><ValueInspector title="Recorded state & changes" size="compact" /></div></details></details>;
 }
 
-function ReplaySurfaces({ run, onEvidence }: { run: AssessmentRun; onEvidence: ReplayOptions['onEvidence'] }) {
-  const { snapshots, selectedIndex, selectIndex, error, traceGraph, recording } = useExplainableRun();
-  const presentation = useMemo(() => presentationSteps(snapshots, run, recording), [snapshots, run, recording]);
-  const displaySnapshots = presentation.steps;
+function ReplaySurfaces({ run, onEvidence, onSelectedIndexChange }: Pick<ReplayOptions, 'run' | 'onEvidence' | 'onSelectedIndexChange'>) {
+  const { snapshots, selectedIndex, selectIndex, error, traceGraph } = useExplainableRun();
+  useEffect(() => {
+    if (!snapshots.length) return;
+    if (selectedIndex >= snapshots.length) { selectIndex(snapshots.length - 1); return; }
+    onSelectedIndexChange?.(selectedIndex);
+  }, [selectedIndex, snapshots.length, selectIndex, onSelectedIndexChange]);
   const [pane, setPane] = useState<'chart' | 'details'>('chart');
   const inspect = () => { if (window.matchMedia('(max-width: 900px)').matches) setPane('details'); };
   if (error || !snapshots.length) return <div className="af-replay-error" role="status">{error || 'This recording has no executed steps to replay.'} Original workflow output and criterion findings remain available.</div>;
   if (snapshots.length > MAX_REPLAY_STEPS || traceGraph.nodes.length > MAX_REPLAY_STEPS) return <div className="af-replay-error" role="status">This recording exceeds the interactive viewer’s {MAX_REPLAY_STEPS}-step limit. Inspect its original workflow output instead.</div>;
   return (
     <div className="af-replay" data-pane={pane}>
-      <div className="af-replay-header"><strong>Recorded replay</strong><span>Checks are not rerun.</span></div>
-      <div className="af-replay-controls"><TimeTravelControls snapshots={displaySnapshots} selectedIndex={selectedIndex} onIndexChange={selectIndex} unstyled size="compact" /><label className="af-replay-jump">Jump to step<select value={selectedIndex} onChange={event => selectIndex(Number(event.currentTarget.value))}>{displaySnapshots.map((snapshot, index) => <option key={`${snapshot.runtimeStageId || snapshot.stageName}-${index}`} value={index}>{index + 1}. {snapshot.stageLabel}</option>)}</select></label></div>
       <div className="af-replay-pane-tabs"><button type="button" aria-pressed={pane === 'chart'} onClick={() => setPane('chart')}>Chart</button><button type="button" aria-pressed={pane === 'details'} onClick={() => setPane('details')}>Selected step</button></div>
       <div className="af-replay-main"><ReplayGraph run={run} onInspect={inspect} /><StepContext run={run} onEvidence={onEvidence} /></div>
 
@@ -214,13 +236,13 @@ function ReplaySurfaces({ run, onEvidence }: { run: AssessmentRun; onEvidence: R
   );
 }
 
-export function mountReplay(container: HTMLElement, { run, workflow, onEvidence }: ReplayOptions): () => void {
+export function mountReplay(container: HTMLElement, { run, workflow, onEvidence, initialSelectedIndex, onSelectedIndexChange }: ReplayOptions): () => void {
   const root = createRoot(container);
   let mounted = true;
   root.render(
     <ReplayBoundary>
-      <ExplainableProvider recording={workflow.recording} theme={{ mode: 'light' }} defaultSelectedIndex={0}>
-        <ReplaySurfaces run={run} onEvidence={onEvidence} />
+      <ExplainableProvider recording={workflow.recording} theme={{ mode: 'light' }} defaultSelectedIndex={Number.isSafeInteger(initialSelectedIndex) && initialSelectedIndex! >= 0 ? initialSelectedIndex : 0}>
+        <ReplaySurfaces run={run} onEvidence={onEvidence} onSelectedIndexChange={onSelectedIndexChange} />
       </ExplainableProvider>
     </ReplayBoundary>,
   );

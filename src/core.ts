@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createRequire } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, realpathSync, lstatSync, statSync, existsSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
@@ -17,6 +18,7 @@ import type { SourceFetch, SourceLimits } from './source-import.ts';
 
 const execFileAsync = promisify(execFile);
 const VERSION = '0.3.0';
+const FOOTPRINT_VERSION: string = createRequire(import.meta.url)('footprintjs/package.json').version;
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_SNAPSHOT_BYTES = 32 * 1024 * 1024;
 const MAX_REPLAY_BYTES = 8 * 1024 * 1024;
@@ -401,9 +403,9 @@ export class AssessmentEngine {
       executor.attachScopeRecorder(metrics());
       await executor.run({ input: { projectPath: subject.path, criterionIds: selected } });
       const snapshot = executor.getSnapshot();
-      const recording: WorkflowRecording = { schemaVersion: 1, recorder: 'footprintjs', version: '9.44.1', scope: 'automated-evaluation', assessmentId: assessment.id, policyDigest: assessment.framework.policyDigest, sourceDigest: assessment.sourceSnapshot.digest, snapshot, structure: builtChart.buildTimeStructure, narrativeEntries: executor.getNarrativeEntries() };
+      const recording: WorkflowRecording = { schemaVersion: 1, recorder: 'footprintjs', version: FOOTPRINT_VERSION, scope: 'automated-evaluation', assessmentId: assessment.id, policyDigest: assessment.framework.policyDigest, sourceDigest: assessment.sourceSnapshot.digest, snapshot, structure: builtChart.buildTimeStructure, narrativeEntries: executor.getNarrativeEntries() };
       const trace = JSON.stringify(recording, null, 2);
-      this.addEvidence(assessment, 'footprintjs', '9.44.1', 'Recorded assessment workflow', Buffer.from(trace), { format: 'footprintjs-workflow', schemaVersion: 1, scope: 'automated-evaluation', stages: selected.length + 1 });
+      this.addEvidence(assessment, 'footprintjs', FOOTPRINT_VERSION, 'Recorded assessment workflow', Buffer.from(trace), { format: 'footprintjs-workflow', schemaVersion: 1, scope: 'automated-evaluation', stages: selected.length + 1 });
       assessment.status = template.criteria.some(c => c.requiresReview) ? 'awaiting_review' : 'completed';
       assessment.automationCompletedAt = stamp();
       assessment.completedAt = assessment.status === 'completed' ? assessment.automationCompletedAt : null;

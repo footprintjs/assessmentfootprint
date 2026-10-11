@@ -4,11 +4,11 @@ AssessmentFootprint reuses FootprintJS for its evaluation chart and execution re
 
 ## Used now: FootprintJS
 
-`package.json` pins published package `footprintjs` to `9.44.1`. The shared [chart builder](../src/chart.ts) imports `flowChart`; the [core](../src/core.ts) executes that chart through `FlowChartExecutor`. The same definition supplies the draft preview and the actual execution graph: an initialization stage records the already captured input digest, followed by an asynchronous stage for each selected criterion. The retained artifact contains the full runtime snapshot, build-time structure, narrative entries, and metrics captured during traversal.
+`package.json` declares published package `footprintjs` as `^10.0.0`; the lockfile currently resolves `10.0.0`. New recordings retain the actual installed version, and older records keep their original version. The shared [chart builder](../src/chart.ts) imports `flowChart`; the [core](../src/core.ts) executes that chart through `FlowChartExecutor`. The same definition supplies the draft preview and the actual execution graph: an initialization stage records the already captured input digest, followed by an asynchronous stage for each selected criterion. The retained artifact contains the full runtime snapshot, build-time structure, narrative entries, and metrics captured during traversal.
 
 This gives the workbench a replayable account of how its own evaluation state changed without adding an LLM runtime. It does not independently validate the external evidence, prove that a criterion was well chosen, or establish complete file-to-decision causal proof. File snapshots/hashes, scanner diagnostics, and criterion limitations remain AssessmentFootprint's responsibility. The recording covers automated evaluation after input capture; human review remains a separate attributed judgment and does not rewrite it.
 
-FootprintJS also exports `decide` for rule/operand evidence and tracing helpers under `footprintjs/trace`. Those are potential additions when more expressive deterministic policies justify them; the initial file checks are ordinary criterion evaluators rather than fabricated `decide` branches.
+FootprintJS also exports `decide` for rule/operand evidence and record tracing helpers in `foottrace`. Those are potential additions when more expressive deterministic policies justify them; the initial file checks are ordinary criterion evaluators rather than fabricated `decide` branches.
 
 Primary project: [FootprintJS](https://github.com/footprintjs/footPrint).
 

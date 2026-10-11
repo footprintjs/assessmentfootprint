@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { chmodSync, closeSync, ftruncateSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -60,7 +61,9 @@ test('a real assessment replays the exact chart and criterion order through the 
   const recording = replay(engine, run.id);
   assert.equal(recording.schemaVersion, 1);
   assert.equal(recording.recorder, 'footprintjs');
-  assert.equal(recording.version, '9.44.1');
+  const installedVersion = createRequire(import.meta.url)('footprintjs/package.json').version;
+  assert.equal(recording.version, installedVersion);
+  assert.equal(run.evidence.find(item => item.source === 'Recorded assessment workflow')?.toolVersion, installedVersion);
   assert.equal(recording.scope, 'automated-evaluation');
   assert.equal(recording.assessmentId, run.id);
   assert.equal(recording.policyDigest, run.framework.policyDigest);

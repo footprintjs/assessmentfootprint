@@ -4,7 +4,7 @@ AssessmentFootprint is one local assessment engine with two interfaces. `src/cor
 
 ## Runtime and persistence
 
-Node 24+ runs the engine and CLI TypeScript source directly and supplies `node:sqlite`. FootprintJS `9.44.1` executes and records the evaluation chart. The browser viewer uses pinned `footprint-explainable-ui` `0.38.0`, React/ReactDOM `19.2.5`, and `@xyflow/react` `12.10.2`. These are bundled locally by `scripts/build-viewer.mjs` using esbuild into `web/assets/replay.js` and `replay.css`; no CDN or remote renderer is required. The checkout retains the generated assets. `npm run build:viewer` updates them; `npm run check` verifies that committed bundles match source as well as checking both TypeScript configurations and the tests.
+Node 24+ runs the engine and CLI TypeScript source directly and supplies `node:sqlite`. FootprintJS executes and records the evaluation chart. Its dependency range is `^10.0.0`, with `10.0.0` currently resolved in the lockfile; recordings and their evidence metadata use the actual installed package version. The browser viewer uses pinned `footprint-explainable-ui` `0.38.0`, React/ReactDOM `19.2.5`, and `@xyflow/react` `12.10.2`. These are bundled locally by `scripts/build-viewer.mjs` using esbuild into `web/assets/replay.js` and `replay.css`; no CDN or remote renderer is required. The checkout retains the generated assets. `npm run build:viewer` updates them; `npm run check` verifies that committed bundles match source as well as checking both TypeScript configurations and the tests.
 
 The SQLite database uses WAL mode and stores a JSON payload per run plus versioned template manifests. It is local policy/run storage, not a relational evidence graph or a signed audit service.
 

@@ -28,7 +28,7 @@
   "dependencies": {
     "@xyflow/react": "12.10.2",
     "footprint-explainable-ui": "0.38.0",
-    "footprintjs": "9.44.1",
+    "footprintjs": "^10.0.0",
     "react": "19.2.5",
     "react-dom": "19.2.5",
     "tar": "7.5.22"

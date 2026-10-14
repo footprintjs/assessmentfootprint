@@ -30,7 +30,7 @@ Studio opens a local browser page and prints its address. The server listens on 
 ### First trial
 
 1. Start Studio using the instructions above. A local folder is optional: `npm start` opens the workbench with the current folder selected.
-2. In **Project**, keep **Local folder**, or select **GitHub repository** / **npm package** and choose **Fetch project**. For example, enter a public repository URL or `footprintjs@10.0.0`. A remote source is downloaded to this computer before assessment. Choose **Continue to Method**; a local folder is inspected before advancing.
+2. In **Project**, keep **Local folder**, or select **GitHub repository** / **npm package** and choose **Fetch project**. For example, enter a public repository URL or `footprintjs@10.0.1`. A remote source is downloaded to this computer before assessment. Choose **Continue to Method**; a local folder is inspected before advancing.
 3. In **Method**, keep the built-in **Local open-source readiness** template for the first run. Continue to **Flow**, click a stage to see its rule and evidence requirements, then choose **Run assessment**.
 4. In **Results**, use **Findings** to inspect the source scope, original evidence, and required human reviews. Switch to **Replay what happened** to explore the saved execution. Missing files or an unavailable scanner remain visible as negative or incomplete findings. The governance stage waits for a human review.
 5. Export HTML or JSON when ready to share the assessment. These exports contain source paths and supplied reviewer details, so inspect them before sharing.
